@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
@@ -75,6 +76,7 @@ import com.bc1800.ballistics.data.BallisticsCatalog
 import com.bc1800.ballistics.data.UnitFormatters
 import com.bc1800.ballistics.model.AmmoCategory
 import com.bc1800.ballistics.model.AmmoLoad
+import com.bc1800.ballistics.model.AppThemeMode
 import com.bc1800.ballistics.model.ClickUnit
 import com.bc1800.ballistics.model.DragModel
 import com.bc1800.ballistics.model.FirearmCategory
@@ -87,6 +89,7 @@ import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.TwistDirection
 import com.bc1800.ballistics.ui.AppUiState
 import com.bc1800.ballistics.ui.BallisticsViewModel
+import com.bc1800.ballistics.ui.components.RangefinderHelpView
 import java.util.Locale
 import java.util.UUID
 
@@ -96,7 +99,8 @@ fun ProfilesScreen(
     uiState: AppUiState,
     viewModel: BallisticsViewModel
 ) {
-    var selectedSubTab by rememberSaveable { mutableIntStateOf(0) } // 0 = Guns, 1 = Scopes, 2 = Ammo
+    var selectedSubTab by rememberSaveable { mutableIntStateOf(0) } // 0 = Guns, 1 = Scopes, 2 = Ammo, 3 = Cans
+    var showRangefinderHelp by rememberSaveable { mutableStateOf(false) }
     var showCatalogDialog by remember { mutableStateOf(false) }
 
     var editingGun by remember { mutableStateOf<FirearmSetup?>(null) }
@@ -163,39 +167,76 @@ fun ProfilesScreen(
         val isWide = maxWidth >= 600.dp
         val columns = if (isWide) 2 else 1
 
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Active Rig Strip
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                shape = MaterialTheme.shapes.medium
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    Text(
-                        text = "ACTIVE RIG",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "${uiState.activeFirearm.name}  •  ${uiState.activeScope.name}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    val suppLabel = uiState.activeSuppressor?.name ?: "Unsuppressed"
-                    Text(
-                        text = "${uiState.activeAmmo.name}  •  Can: $suppLabel",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+        if (showRangefinderHelp) {
+            RangefinderHelpView(
+                isNightRed = uiState.preferences.themeMode == AppThemeMode.NIGHT_RED,
+                onBack = { showRangefinderHelp = false }
+            )
+        } else {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Active Rig Strip + LBC1800 Display Help Pill
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "ACTIVE RIG",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Surface(
+                                onClick = { showRangefinderHelp = true },
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                shape = RoundedCornerShape(999.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.HelpOutline,
+                                        contentDescription = "Rangefinder Help",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "Help",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = "${uiState.activeFirearm.name}  •  ${uiState.activeScope.name}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val suppLabel = uiState.activeSuppressor?.name ?: "Unsuppressed"
+                        Text(
+                            text = "${uiState.activeAmmo.name}  •  Can: $suppLabel",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
-            }
 
             // Segmented Switcher + Catalog Launcher (row on unfolded, stacked on cover)
             if (isWide) {
@@ -557,74 +598,75 @@ fun ProfilesScreen(
             }
         }
 
-        FloatingActionButton(
-            onClick = {
-                when (selectedSubTab) {
-                    0 -> {
-                        isCreatingGun = true
-                        editingGun = FirearmSetup(
-                            id = UUID.randomUUID().toString(),
-                            name = "",
-                            category = FirearmCategory.RIFLE,
-                            caliberHint = ".223 Rem",
-                            barrelLengthInches = 16.0,
-                            barrelTwistInches = 8.0,
-                            twistDirection = TwistDirection.RIGHT,
-                            isFavorite = true
-                        )
+            FloatingActionButton(
+                onClick = {
+                    when (selectedSubTab) {
+                        0 -> {
+                            isCreatingGun = true
+                            editingGun = FirearmSetup(
+                                id = UUID.randomUUID().toString(),
+                                name = "",
+                                category = FirearmCategory.RIFLE,
+                                caliberHint = ".223 Rem",
+                                barrelLengthInches = 16.0,
+                                barrelTwistInches = 8.0,
+                                twistDirection = TwistDirection.RIGHT,
+                                isFavorite = true
+                            )
+                        }
+                        1 -> {
+                            isCreatingScope = true
+                            editingScope = ScopeSetup(
+                                id = UUID.randomUUID().toString(),
+                                name = "",
+                                scopeModel = "",
+                                category = ScopeCategory.RIFLE_SCOPE,
+                                sightHeightInches = 1.85,
+                                zeroRangeYards = 100.0,
+                                clickUnit = ClickUnit.QUARTER_MOA,
+                                isFavorite = true
+                            )
+                        }
+                        2 -> {
+                            isCreatingAmmo = true
+                            editingAmmo = AmmoLoad(
+                                id = UUID.randomUUID().toString(),
+                                name = "",
+                                caliber = ".223 Rem",
+                                category = AmmoCategory.RIFLE,
+                                dragModel = DragModel.G1,
+                                ballisticCoefficient = 0.250,
+                                muzzleVelocityFps = 3100.0,
+                                bulletWeightGrains = 55.0,
+                                bulletDiameterInches = 0.224,
+                                isFavorite = true
+                            )
+                        }
+                        else -> {
+                            isCreatingSuppressor = true
+                            editingSuppressor = SuppressorSetup(
+                                id = UUID.randomUUID().toString(),
+                                name = "",
+                                manufacturer = "",
+                                category = SuppressorCategory.RIMFIRE,
+                                caliberRating = ".22 LR",
+                                mountType = "1/2x28 Direct Thread",
+                                lengthInches = 5.0,
+                                weightOz = 5.0,
+                                diameterInches = 1.0,
+                                isFavorite = true
+                            )
+                        }
                     }
-                    1 -> {
-                        isCreatingScope = true
-                        editingScope = ScopeSetup(
-                            id = UUID.randomUUID().toString(),
-                            name = "",
-                            scopeModel = "",
-                            category = ScopeCategory.RIFLE_SCOPE,
-                            sightHeightInches = 1.85,
-                            zeroRangeYards = 100.0,
-                            clickUnit = ClickUnit.QUARTER_MOA,
-                            isFavorite = true
-                        )
-                    }
-                    2 -> {
-                        isCreatingAmmo = true
-                        editingAmmo = AmmoLoad(
-                            id = UUID.randomUUID().toString(),
-                            name = "",
-                            caliber = ".223 Rem",
-                            category = AmmoCategory.RIFLE,
-                            dragModel = DragModel.G1,
-                            ballisticCoefficient = 0.250,
-                            muzzleVelocityFps = 3100.0,
-                            bulletWeightGrains = 55.0,
-                            bulletDiameterInches = 0.224,
-                            isFavorite = true
-                        )
-                    }
-                    else -> {
-                        isCreatingSuppressor = true
-                        editingSuppressor = SuppressorSetup(
-                            id = UUID.randomUUID().toString(),
-                            name = "",
-                            manufacturer = "",
-                            category = SuppressorCategory.RIMFIRE,
-                            caliberRating = ".22 LR",
-                            mountType = "1/2x28 Direct Thread",
-                            lengthInches = 5.0,
-                            weightOz = 5.0,
-                            diameterInches = 1.0,
-                            isFavorite = true
-                        )
-                    }
-                }
-            },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp),
-            containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary
-        ) {
-            Icon(Icons.Default.Add, contentDescription = "Add")
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp),
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add")
+            }
         }
     }
 
