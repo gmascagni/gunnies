@@ -17,20 +17,26 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ListAlt
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -38,6 +44,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -51,6 +58,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -75,21 +83,48 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.bc1800.ballistics.ble.BleConnectionState
 import com.bc1800.ballistics.model.AppThemeMode
 import com.bc1800.ballistics.ui.BallisticsViewModel
+import com.bc1800.ballistics.ui.components.LogbookSheetContent
 import com.bc1800.ballistics.ui.screens.PreferencesScreen
 import com.bc1800.ballistics.ui.screens.ProfilesScreen
 import com.bc1800.ballistics.ui.screens.RangeCardScreen
 import com.bc1800.ballistics.ui.screens.RangefinderScreen
 import com.bc1800.ballistics.ui.screens.SolverScreen
+import com.bc1800.ballistics.ui.screens.StageCardScreen
 import com.bc1800.ballistics.ui.screens.WeatherScreen
 import com.bc1800.ballistics.ui.theme.BC1800Theme
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: BallisticsViewModel by viewModels()
+    private var keepScreenAwakeEnabled: Boolean = true
+
+    private fun applyKeepScreenAwake(enabled: Boolean, rootView: android.view.View? = null) {
+        keepScreenAwakeEnabled = enabled
+        if (enabled) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        window.decorView.keepScreenOn = enabled
+        rootView?.keepScreenOn = enabled
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyKeepScreenAwake(keepScreenAwakeEnabled)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            applyKeepScreenAwake(keepScreenAwakeEnabled)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        applyKeepScreenAwake(true)
 
         setContent {
             val prefs by viewModel.preferencesFlow.collectAsStateWithLifecycle()
@@ -100,16 +135,15 @@ class MainActivity : ComponentActivity() {
                 val isLight = prefs.themeMode == AppThemeMode.DAYLIGHT
                 controller.isAppearanceLightStatusBars = isLight
                 controller.isAppearanceLightNavigationBars = isLight
+                applyKeepScreenAwake(prefs.keepScreenAwake, view)
             }
 
-            DisposableEffect(prefs.keepScreenAwake) {
-                if (prefs.keepScreenAwake) {
-                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                } else {
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                }
+            DisposableEffect(view, prefs.keepScreenAwake) {
+                applyKeepScreenAwake(prefs.keepScreenAwake, view)
                 onDispose {
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    if (!prefs.keepScreenAwake) {
+                        applyKeepScreenAwake(false, view)
+                    }
                 }
             }
 
@@ -125,6 +159,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class AppRoute(val label: String, val icon: ImageVector) {
     SOLVER("Solver", Icons.Default.GpsFixed),
+    STAGE_CARD("Stage", Icons.Default.Flag),
     RANGE_CARD("DOPE", Icons.AutoMirrored.Filled.ListAlt),
     WEATHER("Weather", Icons.Default.Cloud),
     SETUP("Setup", Icons.Default.Tune),
@@ -138,6 +173,7 @@ private fun BC1800AppRoot(viewModel: BallisticsViewModel) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var selectedRouteOrdinal by rememberSaveable { mutableIntStateOf(AppRoute.SOLVER.ordinal) }
+    var showLogbookSheet by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     var pendingConnectTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -229,12 +265,17 @@ private fun BC1800AppRoot(viewModel: BallisticsViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .imePadding(),
+            contentWindowInsets = WindowInsets.safeDrawing,
             topBar = {
                 TopAppBar(
+                    windowInsets = WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                    ),
                     title = {
                         Text(
                             text = when (currentRoute) {
-                                AppRoute.SOLVER -> "BC1800 Ballistics"
+                                AppRoute.SOLVER -> "Gunnies Ballistics"
+                                AppRoute.STAGE_CARD -> "PRS Stage Card"
                                 AppRoute.RANGE_CARD -> "DOPE Range Card"
                                 AppRoute.WEATHER -> "GPS Weather & Wind"
                                 AppRoute.SETUP -> "Arsenal Setup"
@@ -289,6 +330,19 @@ private fun BC1800AppRoot(viewModel: BallisticsViewModel) {
                             }
                         }
 
+                        // Cold Bore & Range Session Logbook Drawer
+                        IconButton(onClick = { showLogbookSheet = true }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                                contentDescription = "Dope Logbook",
+                                tint = if (uiState.sessionLogs.isNotEmpty()) {
+                                    MaterialTheme.colorScheme.secondary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+
                         // 1-Tap Field Theme / Night Red Cycle
                         IconButton(onClick = { viewModel.cycleThemeMode() }) {
                             Icon(
@@ -324,7 +378,13 @@ private fun BC1800AppRoot(viewModel: BallisticsViewModel) {
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 if (!isExpandedScreen) {
-                    val coverTabs = listOf(AppRoute.SOLVER, AppRoute.RANGE_CARD, AppRoute.WEATHER, AppRoute.SETUP)
+                    val coverTabs = listOf(
+                        AppRoute.SOLVER,
+                        AppRoute.STAGE_CARD,
+                        AppRoute.RANGE_CARD,
+                        AppRoute.WEATHER,
+                        AppRoute.SETUP
+                    )
                     NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                         coverTabs.forEach { tab ->
                             NavigationBarItem(
@@ -346,6 +406,7 @@ private fun BC1800AppRoot(viewModel: BallisticsViewModel) {
                 if (isExpandedScreen) {
                     val railRoutes = listOf(
                         AppRoute.SOLVER,
+                        AppRoute.STAGE_CARD,
                         AppRoute.RANGE_CARD,
                         AppRoute.WEATHER,
                         AppRoute.SETUP,
@@ -353,6 +414,9 @@ private fun BC1800AppRoot(viewModel: BallisticsViewModel) {
                     )
                     NavigationRail(
                         containerColor = MaterialTheme.colorScheme.surface,
+                        windowInsets = WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Start + WindowInsetsSides.Vertical
+                        ),
                         modifier = Modifier.fillMaxHeight()
                     ) {
                         Spacer(Modifier.weight(0.15f))
@@ -386,7 +450,19 @@ private fun BC1800AppRoot(viewModel: BallisticsViewModel) {
                             viewModel = viewModel,
                             onRequestLocationWeather = { requestWeatherWithPermissions() },
                             onOpenWeatherTab = { selectedRouteOrdinal = AppRoute.WEATHER.ordinal },
-                            onOpenRangefinderTab = { selectedRouteOrdinal = AppRoute.RANGEFINDER.ordinal }
+                            onOpenRangefinderTab = { selectedRouteOrdinal = AppRoute.RANGEFINDER.ordinal },
+                            onOpenLogbook = { showLogbookSheet = true }
+                        )
+
+                        AppRoute.STAGE_CARD -> StageCardScreen(
+                            uiState = uiState,
+                            viewModel = viewModel,
+                            onSendTargetToSolver = { target ->
+                                viewModel.setRangeYards(target.rangeYards)
+                                viewModel.setInclinationDeg(target.inclinationDeg)
+                                viewModel.setMoverSpeedMph(target.moverSpeedMph)
+                                selectedRouteOrdinal = AppRoute.SOLVER.ordinal
+                            }
                         )
 
                         AppRoute.RANGE_CARD -> RangeCardScreen(
@@ -422,6 +498,20 @@ private fun BC1800AppRoot(viewModel: BallisticsViewModel) {
                         )
                     }
                 }
+            }
+        }
+
+        if (showLogbookSheet) {
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = { showLogbookSheet = false },
+                sheetState = sheetState
+            ) {
+                LogbookSheetContent(
+                    uiState = uiState,
+                    onDeleteLog = { viewModel.deleteSessionLog(it) },
+                    onDone = { showLogbookSheet = false }
+                )
             }
         }
     }

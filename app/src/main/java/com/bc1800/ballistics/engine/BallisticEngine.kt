@@ -2,11 +2,15 @@ package com.bc1800.ballistics.engine
 
 import com.bc1800.ballistics.model.Atmosphere
 import com.bc1800.ballistics.model.BallisticSolution
+import com.bc1800.ballistics.model.BcBand
 import com.bc1800.ballistics.model.DistanceUnit
 import com.bc1800.ballistics.model.DragModel
+import com.bc1800.ballistics.model.DsfPoint
 import com.bc1800.ballistics.model.RifleProfile
+import com.bc1800.ballistics.model.StageTarget
 import com.bc1800.ballistics.model.TwistDirection
 import com.bc1800.ballistics.model.WeaponMode
+import com.bc1800.ballistics.model.WindMode
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -22,13 +26,16 @@ import kotlin.math.sqrt
  *
  * Physics features:
  * - Exact BRL/JBM G1 & G7 drag curves
+ * - Stepped Multi-BC (velocity-banded ballistic coefficients with smooth boundary transitions)
+ * - Transonic & Subsonic Drop Scale Factor (DSF) interpolation + DSF calibration solver
+ * - Multi-Zone Wind Banding (Near 0–33%, Mid 33–66%, Far 66–100% downrange sampling)
  * - Humid ICAO air density, station pressure conversion, speed of sound, and density altitude
  * - True 3D inclined-fire gravity AND horizontal wind vector decomposition
  * - Powder temperature sensitivity (fps/°F) + Zero POI vertical/horizontal offset + Scope SSF
  * - Density-corrected Miller gyroscopic stability (Sg), Bryan Litz Spin Drift, Aerodynamic Jump
  * - Full horizontal & vertical (Eötvös) Coriolis acceleration from GPS latitude + shooting bearing
  * - Moving target lead ("Mover") + live Wind Gust Bracket
- * - Muzzle Velocity (MV) Truing root solver from observed impact drop
+ * - Two-stage Ballistic Calibration: Supersonic MV Truing + Transonic/Subsonic DSF Truing
  * - True O(N) single-pass range card & MPBR trajectory sweep
  */
 object BallisticEngine {
@@ -42,6 +49,8 @@ object BallisticEngine {
     private const val GRAINS_PER_LB = 7000.0
     private const val BC1800_ONBOARD_LIMIT_YARDS = 800.0
     private const val METERS_TO_YARDS = 1.0936133
+    private const val BC_BLEND_HALF_FPS = 20.0
+    const val TRANSONIC_MACH_GATE = 1.20
 
     data class AirState(
         val stationPressureInHg: Double,
@@ -131,6 +140,114 @@ object BallisticEngine {
     }
 
     /**
+     * Zero-allocation velocity-banded BC lookup using primitive arrays sorted descending by minVelocityFps.
+     * Applies a smooth ±20 fps linear transition across step boundaries so RK4 sees no step discontinuity.
+     */
+    private fun lookupBc(
+        vRel: Double,
+        fallbackBc: Double,
+        bandVels: DoubleArray,
+        bandBcs: DoubleArray,
+        bandCount: Int
+    ): Double {
+        if (bandCount == 0) return fallbackBc
+        if (bandCount == 1) return bandBcs[0]
+
+        var i = 0
+        while (i < bandCount - 1) {
+            val thresh = bandVels[i]
+            if (vRel >= thresh + BC_BLEND_HALF_FPS) {
+                return bandBcs[i]
+            }
+            if (vRel > thresh - BC_BLEND_HALF_FPS) {
+                val frac = (vRel - (thresh - BC_BLEND_HALF_FPS)) / (2.0 * BC_BLEND_HALF_FPS)
+                return bandBcs[i + 1] + frac * (bandBcs[i] - bandBcs[i + 1])
+            }
+            i++
+        }
+        return bandBcs[bandCount - 1]
+    }
+
+    /**
+     * Zero-allocation interpolated Drop Scale Factor lookup using primitive arrays sorted ascending by Mach.
+     * Above Mach 1.20 (unless an explicit node >= 1.20 is defined), smoothly returns 1.000.
+     */
+    private fun evalDsf(
+        mach: Double,
+        dsfMachs: DoubleArray,
+        dsfVals: DoubleArray,
+        count: Int
+    ): Double {
+        if (count == 0) return 1.0
+        if (mach <= dsfMachs[0]) return dsfVals[0]
+
+        var i = 0
+        while (i < count - 1) {
+            val m0 = dsfMachs[i]
+            val m1 = dsfMachs[i + 1]
+            if (mach <= m1) {
+                val span = m1 - m0
+                if (span < 1e-6) return dsfVals[i + 1]
+                val frac = (mach - m0) / span
+                return dsfVals[i] + frac * (dsfVals[i + 1] - dsfVals[i])
+            }
+            i++
+        }
+
+        val lastMach = dsfMachs[count - 1]
+        val lastVal = dsfVals[count - 1]
+        return if (lastMach < TRANSONIC_MACH_GATE) {
+            if (mach >= TRANSONIC_MACH_GATE) {
+                1.0
+            } else {
+                val frac = (mach - lastMach) / (TRANSONIC_MACH_GATE - lastMach)
+                lastVal + frac * (1.0 - lastVal)
+            }
+        } else {
+            lastVal
+        }
+    }
+
+    private fun packBcBands(bands: List<BcBand>, outVels: DoubleArray, outBcs: DoubleArray): Int {
+        if (bands.isEmpty()) return 0
+        val sorted = bands
+            .filter { it.bc in 0.01..2.0 && it.minVelocityFps >= 0.0 }
+            .sortedByDescending { it.minVelocityFps }
+        val count = sorted.size.coerceAtMost(outVels.size)
+        for (i in 0 until count) {
+            outVels[i] = sorted[i].minVelocityFps
+            outBcs[i] = sorted[i].bc.coerceAtLeast(0.01)
+        }
+        return count
+    }
+
+    private fun packDsfTable(table: List<DsfPoint>, outMachs: DoubleArray, outVals: DoubleArray): Int {
+        if (table.isEmpty()) return 0
+        val sorted = table
+            .filter { it.mach in 0.05..5.0 && it.dropScaleFactor in 0.5..1.6 }
+            .sortedBy { it.mach }
+        val count = sorted.size.coerceAtMost(outMachs.size)
+        for (i in 0 until count) {
+            outMachs[i] = sorted[i].mach
+            outVals[i] = sorted[i].dropScaleFactor
+        }
+        return count
+    }
+
+    /**
+     * Merges a newly calibrated DSF node into an existing table (replacing any node within 0.05 Mach)
+     * and returns the updated table sorted ascending by Mach.
+     */
+    fun mergeDsfPoint(existing: List<DsfPoint>, point: DsfPoint): List<DsfPoint> {
+        val roundedMach = (point.mach * 100.0).roundToInt() / 100.0
+        val roundedDsf = (point.dropScaleFactor * 1000.0).roundToInt() / 1000.0
+        val filtered = existing.filterNot { abs(it.mach - roundedMach) < 0.05 }
+        return (filtered + DsfPoint(roundedMach, roundedDsf.coerceIn(0.65, 1.45)))
+            .sortedBy { it.mach }
+            .take(6)
+    }
+
+    /**
      * Solves for the bore launch elevation angle (radians above LOS) required so the projectile
      * hits [profile.zeroOffsetVerticalInches] at [profile.zeroRangeYards] under zero conditions.
      */
@@ -139,7 +256,11 @@ object BallisticEngine {
         val targetZeroYFt = profile.zeroOffsetVerticalInches / 12.0
         val sightHeightFt = profile.sightHeightInches / 12.0
         val mv = effectiveMuzzleVelocityFps(profile, profile.zeroTempF)
-        val bc = profile.ballisticCoefficient.coerceAtLeast(0.01)
+        val bc = profile.primaryBc().coerceAtLeast(0.01)
+
+        val bandVels = DoubleArray(8)
+        val bandBcs = DoubleArray(8)
+        val bandCount = packBcBands(profile.bcBands, bandVels, bandBcs)
 
         val zeroAtmo = Atmosphere(
             temperatureF = profile.zeroTempF,
@@ -160,7 +281,10 @@ object BallisticEngine {
             launchAngleRad = angle0,
             sightHeightFt = sightHeightFt,
             mv = mv,
-            bc = bc,
+            baseBc = bc,
+            bandVels = bandVels,
+            bandBcs = bandBcs,
+            bandCount = bandCount,
             dragModel = profile.dragModel,
             air = air,
             angleRad = 0.0,
@@ -177,7 +301,10 @@ object BallisticEngine {
                 launchAngleRad = angle1,
                 sightHeightFt = sightHeightFt,
                 mv = mv,
-                bc = bc,
+                baseBc = bc,
+                bandVels = bandVels,
+                bandBcs = bandBcs,
+                bandCount = bandCount,
                 dragModel = profile.dragModel,
                 air = air,
                 angleRad = 0.0,
@@ -199,8 +326,8 @@ object BallisticEngine {
     }
 
     /**
-     * Computes a full precision firing solution at a single target range, including optional
-     * Wind Gust Bracket, Coriolis, Aerodynamic Jump, Spin Drift, and Moving Target Lead.
+     * Computes a full precision firing solution at a single target range, including Multi-BC,
+     * DSF, 3-Zone Wind, Wind Gust Bracket, Coriolis, Aerodynamic Jump, Spin Drift, and Mover Lead.
      */
     fun solve(
         profile: RifleProfile,
@@ -225,8 +352,22 @@ object BallisticEngine {
         ).first()
 
         // If gust speed exceeds sustained wind, compute gust windage bracket in one fast pass
-        return if (atmosphere.windGustMph > atmosphere.windSpeedMph + 1.0) {
-            val gustAtmo = atmosphere.copy(windSpeedMph = atmosphere.windGustMph, windGustMph = 0.0)
+        val sustainedMph = atmosphere.effectiveSingleWind().speedMph
+        return if (atmosphere.windGustMph > sustainedMph + 1.0) {
+            val gustAtmo = if (atmosphere.isThreeZoneWind && atmosphere.windProfile != null) {
+                val wp = atmosphere.windProfile
+                val ratio = (atmosphere.windGustMph / sustainedMph.coerceAtLeast(1.0)).coerceIn(1.0, 4.0)
+                atmosphere.copy(
+                    windGustMph = 0.0,
+                    windProfile = wp.copy(
+                        near = wp.near.copy(speedMph = (wp.near.speedMph * ratio).coerceAtMost(60.0)),
+                        mid = wp.mid.copy(speedMph = (wp.mid.speedMph * ratio).coerceAtMost(60.0)),
+                        far = wp.far.copy(speedMph = (wp.far.speedMph * ratio).coerceAtMost(60.0))
+                    )
+                )
+            } else {
+                atmosphere.copy(windSpeedMph = atmosphere.windGustMph, windGustMph = 0.0)
+            }
             val gustSol = integrateMultiRange(
                 profile = profile,
                 atmosphere = gustAtmo,
@@ -243,6 +384,44 @@ object BallisticEngine {
         } else {
             base
         }
+    }
+
+    /**
+     * Solves a single PRS / Field Stage Card target using optional per-target wind & inclination overrides.
+     */
+    fun solveStageTarget(
+        profile: RifleProfile,
+        baseAtmosphere: Atmosphere,
+        target: StageTarget,
+        cachedZeroAngleRad: Double? = null,
+        includeSpinDrift: Boolean = true,
+        includeCoriolis: Boolean = true,
+        includeAeroJump: Boolean = true
+    ): BallisticSolution {
+        val targetAtmo = if (target.windSpeedMph != null || target.windDirectionDeg != null) {
+            val baseWind = baseAtmosphere.effectiveSingleWind()
+            baseAtmosphere.copy(
+                windSpeedMph = target.windSpeedMph ?: baseWind.speedMph,
+                windDirectionDeg = target.windDirectionDeg ?: baseWind.directionDeg,
+                windGustMph = 0.0,
+                windProfile = null
+            )
+        } else {
+            baseAtmosphere
+        }
+        return solve(
+            profile = profile,
+            atmosphere = targetAtmo,
+            rangeYards = target.rangeYards,
+            inclinationDeg = target.inclinationDeg,
+            cachedZeroAngleRad = cachedZeroAngleRad,
+            options = SolverOptions(
+                includeSpinDrift = includeSpinDrift,
+                includeCoriolis = includeCoriolis,
+                includeAeroJump = includeAeroJump,
+                moverSpeedMph = target.moverSpeedMph
+            )
+        )
     }
 
     /**
@@ -297,7 +476,7 @@ object BallisticEngine {
         val ranges = DoubleArray(60) { (it + 1) * 10.0 }
         val pts = integrateMultiRange(
             profile = profile,
-            atmosphere = atmosphere.copy(windSpeedMph = 0.0, windGustMph = 0.0),
+            atmosphere = atmosphere.copy(windSpeedMph = 0.0, windGustMph = 0.0, windProfile = null),
             air = air,
             zeroAngleRad = zeroAngle,
             targetRangesYards = ranges,
@@ -326,7 +505,7 @@ object BallisticEngine {
     }
 
     /**
-     * Guided Muzzle Velocity (MV) Truing Solver.
+     * Stage 1 Calibration — Supersonic Muzzle Velocity (MV) Truing Solver.
      * Given an observed elevation hold (in MOA, positive = UP) at [rangeYards], solves via
      * bisection for the trued Muzzle Velocity (fps) that matches real-world impact.
      */
@@ -362,6 +541,65 @@ object BallisticEngine {
         return 0.5 * (lowMv + highMv)
     }
 
+    /**
+     * Stage 2 Calibration — Transonic / Subsonic Drop Scale Factor (DSF) Truing Solver.
+     * Locks Muzzle Velocity and solves via bisection for the Drop Scale Factor at the target's
+     * Mach regime (Mach <= 1.2) so predicted elevation matches [observedElevationMoa].
+     */
+    fun trueDropScaleFactor(
+        profile: RifleProfile,
+        atmosphere: Atmosphere,
+        rangeYards: Double,
+        observedElevationMoa: Double,
+        inclinationDeg: Double = 0.0,
+        options: SolverOptions = SolverOptions()
+    ): DsfPoint? {
+        if (rangeYards <= profile.zeroRangeYards + 10.0 || observedElevationMoa <= 0.1) return null
+
+        val zeroAngle = computeZeroAngleRad(profile)
+        val baseSol = solve(
+            profile = profile.copy(dsfTable = emptyList()),
+            atmosphere = atmosphere,
+            rangeYards = rangeYards,
+            inclinationDeg = inclinationDeg,
+            cachedZeroAngleRad = zeroAngle,
+            options = options
+        )
+        if (!baseSol.reachedTarget || baseSol.mach > TRANSONIC_MACH_GATE + 0.001) return null
+        val targetMach = ((baseSol.mach * 100.0).roundToInt() / 100.0).coerceIn(0.10, TRANSONIC_MACH_GATE)
+
+        var lowDsf = 0.65
+        var highDsf = 1.45
+
+        fun evalError(candidateDsf: Double): Double {
+            val testTable = mergeDsfPoint(profile.dsfTable, DsfPoint(targetMach, candidateDsf))
+            val sol = solve(
+                profile = profile.copy(dsfTable = testTable),
+                atmosphere = atmosphere,
+                rangeYards = rangeYards,
+                inclinationDeg = inclinationDeg,
+                cachedZeroAngleRad = zeroAngle,
+                options = options
+            )
+            return sol.elevationMoa - observedElevationMoa
+        }
+
+        val errLow = evalError(lowDsf)
+        val errHigh = evalError(highDsf)
+        if (errLow > 0.0 || errHigh < 0.0) return null
+
+        for (i in 0 until 22) {
+            val mid = 0.5 * (lowDsf + highDsf)
+            val errMid = evalError(mid)
+            if (abs(errMid) < 0.003) {
+                return DsfPoint(mach = targetMach, dropScaleFactor = (mid * 1000.0).roundToInt() / 1000.0)
+            }
+            if (errMid < 0.0) lowDsf = mid else highDsf = mid
+        }
+        val solved = 0.5 * (lowDsf + highDsf)
+        return DsfPoint(mach = targetMach, dropScaleFactor = (solved * 1000.0).roundToInt() / 1000.0)
+    }
+
     private fun integrateMultiRange(
         profile: RifleProfile,
         atmosphere: Atmosphere,
@@ -377,26 +615,61 @@ object BallisticEngine {
         val sinAngle = sin(angleRad)
 
         val mv = effectiveMuzzleVelocityFps(profile, atmosphere.temperatureF)
-        val bc = profile.ballisticCoefficient.coerceAtLeast(0.01)
+        val baseBc = profile.primaryBc().coerceAtLeast(0.01)
         val sightHeightFt = profile.sightHeightInches / 12.0
-        val launchedSupersonic = (mv / air.speedOfSoundFps) >= 1.2
+        val launchedSupersonic = (mv / air.speedOfSoundFps) >= TRANSONIC_MACH_GATE
 
-        // True 3D horizontal wind vector decomposed into LOS-tilted frame
-        val windFps = atmosphere.windSpeedMph * 5280.0 / 3600.0
-        val windDirRad = Math.toRadians(atmosphere.windDirectionDeg)
-        val windGroundLong = -windFps * cos(windDirRad)
-        val windX = windGroundLong * cosAngle
-        val windY = -windGroundLong * sinAngle
-        val windZ = -windFps * sin(windDirRad)
+        // Pre-pack stepped Multi-BC and DSF tables into primitive arrays BEFORE the RK4 loop (0 allocations per step)
+        val bandVels = DoubleArray(8)
+        val bandBcs = DoubleArray(8)
+        val bandCount = packBcBands(profile.bcBands, bandVels, bandBcs)
 
-        val windValuePct = (abs(sin(windDirRad)) * 100.0).roundToInt()
+        val dsfMachs = DoubleArray(8)
+        val dsfVals = DoubleArray(8)
+        val dsfCount = packDsfTable(profile.dsfTable, dsfMachs, dsfVals)
+
+        // Precompute 3-Zone OR Single-Zone horizontal wind vectors decomposed into LOS-tilted frame
+        val wp = atmosphere.windProfile
+        val useThreeZone = wp != null && wp.mode == WindMode.THREE_ZONE
+
+        val nearSpdMph = if (useThreeZone) wp!!.near.speedMph else atmosphere.windSpeedMph
+        val nearDirDeg = if (useThreeZone) wp!!.near.directionDeg else atmosphere.windDirectionDeg
+        val midSpdMph = if (useThreeZone) wp!!.mid.speedMph else nearSpdMph
+        val midDirDeg = if (useThreeZone) wp!!.mid.directionDeg else nearDirDeg
+        val farSpdMph = if (useThreeZone) wp!!.far.speedMph else nearSpdMph
+        val farDirDeg = if (useThreeZone) wp!!.far.directionDeg else nearDirDeg
+
+        val nearFps = nearSpdMph * 5280.0 / 3600.0
+        val nearRad = Math.toRadians(nearDirDeg)
+        val nearLong = -nearFps * cos(nearRad)
+        val nearWx = nearLong * cosAngle
+        val nearWy = -nearLong * sinAngle
+        val nearWz = -nearFps * sin(nearRad)
+
+        val midFps = midSpdMph * 5280.0 / 3600.0
+        val midRad = Math.toRadians(midDirDeg)
+        val midLong = -midFps * cos(midRad)
+        val midWx = midLong * cosAngle
+        val midWy = -midLong * sinAngle
+        val midWz = -midFps * sin(midRad)
+
+        val farFps = farSpdMph * 5280.0 / 3600.0
+        val farRad = Math.toRadians(farDirDeg)
+        val farLong = -farFps * cos(farRad)
+        val farWx = farLong * cosAngle
+        val farWy = -farLong * sinAngle
+        val farWz = -farFps * sin(farRad)
+
+        val effWindForPct = atmosphere.effectiveSingleWind()
+        val windValuePct = (abs(sin(Math.toRadians(effWindForPct.directionDeg))) * 100.0).roundToInt()
 
         val sg = computeStabilityFactor(profile, air)
         val latRad = Math.toRadians((atmosphere.gpsLatitude ?: 35.0).coerceIn(-90.0, 90.0))
         val azRad = Math.toRadians(atmosphere.shootingBearingDeg)
         val coriolisActive = options.includeCoriolis && profile.weaponMode == WeaponMode.RIFLE && atmosphere.gpsLatitude != null
 
-        val crosswindMph = atmosphere.windSpeedMph * sin(windDirRad)
+        // Aero jump occurs at the muzzle, so use Near-zone crosswind
+        val crosswindMph = nearSpdMph * sin(nearRad)
         val aeroJumpMoa = if (options.includeAeroJump &&
             profile.weaponMode == WeaponMode.RIFLE &&
             profile.twistDirection != TwistDirection.NONE
@@ -407,7 +680,7 @@ object BallisticEngine {
 
         val gx = -GRAVITY_FPS2 * sinAngle
         val gy = -GRAVITY_FPS2 * cosAngle
-        val dragPrefix = ICAO_DRAG_CONST * air.densityRatio / bc
+        val dragAirConst = ICAO_DRAG_CONST * air.densityRatio
 
         val sinLat = sin(latRad)
         val cosLat = cos(latRad)
@@ -431,10 +704,31 @@ object BallisticEngine {
         val a3 = DoubleArray(3)
         val a4 = DoubleArray(3)
 
-        fun evalAccel(cvx: Double, cvy: Double, cvz: Double, out: DoubleArray) {
-            val rvx = cvx - windX
-            val rvy = cvy - windY
-            val rvz = cvz - windZ
+        val maxTargetFt = (targetRangesYards.lastOrNull() ?: 0.0) * 3.0
+        val invTotalRangeFt = 1.0 / maxTargetFt.coerceAtLeast(1.0)
+        val speedOfSound = air.speedOfSoundFps
+        val dragModel = profile.dragModel
+
+        fun evalAccel(cx: Double, cvx: Double, cvy: Double, cvz: Double, out: DoubleArray) {
+            val wx: Double
+            val wy: Double
+            val wz: Double
+            if (useThreeZone) {
+                val progress = cx * invTotalRangeFt
+                if (progress < 0.3333333333333333) {
+                    wx = nearWx; wy = nearWy; wz = nearWz
+                } else if (progress < 0.6666666666666666) {
+                    wx = midWx; wy = midWy; wz = midWz
+                } else {
+                    wx = farWx; wy = farWy; wz = farWz
+                }
+            } else {
+                wx = nearWx; wy = nearWy; wz = nearWz
+            }
+
+            val rvx = cvx - wx
+            val rvy = cvy - wy
+            val rvz = cvz - wz
             val vRel = sqrt(rvx * rvx + rvy * rvy + rvz * rvz)
             if (vRel < 1e-6) {
                 out[0] = gx
@@ -442,9 +736,10 @@ object BallisticEngine {
                 out[2] = 0.0
                 return
             }
-            val mach = vRel / air.speedOfSoundFps
-            val cd = DragTables.getCd(profile.dragModel, mach)
-            val k = dragPrefix * cd * vRel
+            val mach = vRel / speedOfSound
+            val cd = DragTables.getCd(dragModel, mach)
+            val activeBc = if (bandCount == 0) baseBc else lookupBc(vRel, baseBc, bandVels, bandBcs, bandCount)
+            val k = (dragAirConst / activeBc) * cd * vRel
             val ax = -k * rvx + gx
             var ay = -k * rvy + gy
             var az = -k * rvz
@@ -458,7 +753,6 @@ object BallisticEngine {
         }
 
         var nextIdx = 0
-        val maxTargetFt = (targetRangesYards.lastOrNull() ?: 0.0) * 3.0
 
         fun buildSolution(
             reqRangeYd: Double,
@@ -472,6 +766,10 @@ object BallisticEngine {
             reached: Boolean
         ): BallisticSolution {
             val effectiveFt = if (sx > 1.0) sx else (reqRangeYd * 3.0)
+            val speedFps = sqrt(svx * svx + svy * svy + svz * svz)
+            val mach = speedFps / speedOfSound
+            val appliedDsf = if (dsfCount == 0) 1.0 else evalDsf(mach, dsfMachs, dsfVals, dsfCount)
+
             val spinDriftIn = if (options.includeSpinDrift &&
                 profile.weaponMode == WeaponMode.RIFLE &&
                 profile.twistDirection != TwistDirection.NONE &&
@@ -486,8 +784,9 @@ object BallisticEngine {
             val coriolisElevMoa = -atan2(coriolisElevIn / 12.0, effectiveFt) * (180.0 / PI) * 60.0
             val coriolisWindMoa = -atan2(coriolisWindIn / 12.0, effectiveFt) * (180.0 / PI) * 60.0
 
-            val dropInches = sy * 12.0
-            val elevRad = atan2(-sy, effectiveFt)
+            val scaledSy = sy * appliedDsf
+            val dropInches = scaledSy * 12.0
+            val elevRad = atan2(-scaledSy, effectiveFt)
             val rawElevMoa = elevRad * (180.0 / PI) * 60.0 + aeroJumpMoa
             val elevMoa = rawElevMoa * profile.elevationSsf
             val elevMrad = elevMoa / 3.43774677
@@ -506,9 +805,7 @@ object BallisticEngine {
             val moverLeadMoa = moverLeadRad * (180.0 / PI) * 60.0
             val moverLeadMrad = moverLeadRad * 1000.0
 
-            val speedFps = sqrt(svx * svx + svy * svy + svz * svz)
             val energyFtLbs = (profile.bulletWeightGrains * speedFps * speedFps) / (2.0 * GRAVITY_FPS2 * GRAINS_PER_LB)
-            val mach = speedFps / air.speedOfSoundFps
 
             return BallisticSolution(
                 rangeYards = reqRangeYd,
@@ -535,9 +832,10 @@ object BallisticEngine {
                 timeOfFlightSec = st,
                 mach = mach,
                 stabilityFactorSg = sg,
+                appliedDsf = appliedDsf,
                 densityAltitudeFt = air.densityAltitudeFt,
                 reachedTarget = reached,
-                isTransonicWarning = launchedSupersonic && mach < 1.2,
+                isTransonicWarning = launchedSupersonic && mach < TRANSONIC_MACH_GATE,
                 exceedsOnboard800YdLimit = reqRangeYd > BC1800_ONBOARD_LIMIT_YARDS
             )
         }
@@ -551,22 +849,25 @@ object BallisticEngine {
             val prevVz = vz
             val prevT = t
 
-            evalAccel(vx, vy, vz, a1)
+            evalAccel(x, vx, vy, vz, a1)
 
+            val x2 = x + 0.5 * dt * vx
             val vx2 = vx + 0.5 * dt * a1[0]
             val vy2 = vy + 0.5 * dt * a1[1]
             val vz2 = vz + 0.5 * dt * a1[2]
-            evalAccel(vx2, vy2, vz2, a2)
+            evalAccel(x2, vx2, vy2, vz2, a2)
 
+            val x3 = x + 0.5 * dt * vx2
             val vx3 = vx + 0.5 * dt * a2[0]
             val vy3 = vy + 0.5 * dt * a2[1]
             val vz3 = vz + 0.5 * dt * a2[2]
-            evalAccel(vx3, vy3, vz3, a3)
+            evalAccel(x3, vx3, vy3, vz3, a3)
 
+            val x4 = x + dt * vx3
             val vx4 = vx + dt * a3[0]
             val vy4 = vy + dt * a3[1]
             val vz4 = vz + dt * a3[2]
-            evalAccel(vx4, vy4, vz4, a4)
+            evalAccel(x4, vx4, vy4, vz4, a4)
 
             x += (dt / 6.0) * (vx + 2.0 * vx2 + 2.0 * vx3 + vx4)
             y += (dt / 6.0) * (vy + 2.0 * vy2 + 2.0 * vy3 + vy4)
@@ -636,7 +937,10 @@ object BallisticEngine {
         launchAngleRad: Double,
         sightHeightFt: Double,
         mv: Double,
-        bc: Double,
+        baseBc: Double,
+        bandVels: DoubleArray,
+        bandBcs: DoubleArray,
+        bandCount: Int,
         dragModel: DragModel,
         air: AirState,
         angleRad: Double,
@@ -647,7 +951,8 @@ object BallisticEngine {
     ) {
         val gx = -GRAVITY_FPS2 * sin(angleRad)
         val gy = -GRAVITY_FPS2 * cos(angleRad)
-        val dragPrefix = ICAO_DRAG_CONST * air.densityRatio / bc
+        val dragAirConst = ICAO_DRAG_CONST * air.densityRatio
+        val speedOfSound = air.speedOfSoundFps
 
         var x = 0.0
         var y = -sightHeightFt
@@ -672,8 +977,9 @@ object BallisticEngine {
             if (vRel < 1e-6) {
                 dst[0] = gx; dst[1] = gy; dst[2] = 0.0; return
             }
-            val cd = DragTables.getCd(dragModel, vRel / air.speedOfSoundFps)
-            val k = dragPrefix * cd * vRel
+            val cd = DragTables.getCd(dragModel, vRel / speedOfSound)
+            val activeBc = if (bandCount == 0) baseBc else lookupBc(vRel, baseBc, bandVels, bandBcs, bandCount)
+            val k = (dragAirConst / activeBc) * cd * vRel
             dst[0] = -k * rvx + gx
             dst[1] = -k * rvy + gy
             dst[2] = -k * rvz

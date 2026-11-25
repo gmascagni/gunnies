@@ -212,14 +212,14 @@ fun ReticleViewCard(
                         onClick = { dialElevationMode = false },
                         shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
                     ) {
-                        Text("Hold All", style = MaterialTheme.typography.labelLarge)
+                        Text("Hold All", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                     }
                     SegmentedButton(
                         selected = dialElevationMode,
                         onClick = { dialElevationMode = true },
                         shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
                     ) {
-                        Text("Dial Elev • Hold Wind", style = MaterialTheme.typography.labelLarge)
+                        Text("Dial Elev / Hold Wind", style = MaterialTheme.typography.labelMedium, maxLines = 1)
                     }
                 }
 

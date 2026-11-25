@@ -249,28 +249,37 @@ fun TurretDialGauge(
                 drawPath(pointerPath, color = accentColor)
             }
 
-            // Primary Ballistic Readout (tabular numerals)
+            // Primary Ballistic Readout (tabular numerals — never wraps MOA/MRAD vertically)
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 if (direction.isNotEmpty() && direction != "ZERO") {
                     Text(
                         text = direction,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
-                        color = accentColor
+                        color = accentColor,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.padding(bottom = 3.dp)
                     )
                 }
                 Text(
                     text = value,
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.onSurface
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false
                 )
                 Text(
                     text = unitLabel,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = accentColor,
+                    maxLines = 1,
+                    softWrap = false,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
             }

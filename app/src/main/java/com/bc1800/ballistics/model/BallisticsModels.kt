@@ -130,8 +130,29 @@ data class ScopeSetup(
 )
 
 /**
- * Independent Ammunition / Bullet load (category, caliber, drag model, BC, MV, weight,
- * diameter, optional explicit bullet length, powder temperature sensitivity, favorite flag).
+ * Velocity-banded Ballistic Coefficient entry (Sierra / Strelok multi-BC convention).
+ * Applies when instantaneous projectile velocity >= [minVelocityFps].
+ */
+@Serializable
+data class BcBand(
+    val minVelocityFps: Double,
+    val bc: Double
+)
+
+/**
+ * Transonic / Subsonic Drop Scale Factor (DSF) calibration node mapping Mach number
+ * to a vertical drop multiplier (1.0 = unscaled).
+ */
+@Serializable
+data class DsfPoint(
+    val mach: Double,
+    val dropScaleFactor: Double = 1.0
+)
+
+/**
+ * Independent Ammunition / Bullet load (category, caliber, drag model, BC, optional stepped
+ * multi-BC velocity bands, transonic/subsonic DSF table, MV, weight, diameter, bullet length,
+ * powder temperature sensitivity, favorite flag).
  */
 @Serializable
 data class AmmoLoad(
@@ -148,8 +169,16 @@ data class AmmoLoad(
     val mvTempSensitivityFpsPerF: Double = 0.0,
     val chronoTempF: Double = 60.0,
     val isFavorite: Boolean = false,
-    val notes: String = ""
-)
+    val notes: String = "",
+    val bcBands: List<BcBand> = emptyList(),
+    val dsfTable: List<DsfPoint> = emptyList()
+) {
+    /** Primary (highest-velocity) BC used for single-BC summaries and LBC1800 :BP sync. */
+    fun primaryBc(): Double {
+        val valid = bcBands.filter { it.bc in 0.01..2.0 }
+        return valid.maxByOrNull { it.minVelocityFps }?.bc ?: ballisticCoefficient
+    }
+}
 
 /**
  * Independent Suppressor setup (sound moderator: caliber rating, mount, physical specs,
@@ -209,8 +238,16 @@ data class RifleProfile(
     val zeroTempF: Double = 59.0,
     val zeroPressureInHg: Double = 29.92,
     val zeroHumidityPercent: Double = 50.0,
-    val notes: String = ""
+    val notes: String = "",
+    val bcBands: List<BcBand> = emptyList(),
+    val dsfTable: List<DsfPoint> = emptyList()
 ) {
+    /** Primary (highest-velocity) BC for LBC1800 :BP serialization and single-BC fallback. */
+    fun primaryBc(): Double {
+        val valid = bcBands.filter { it.bc in 0.01..2.0 }
+        return valid.maxByOrNull { it.minVelocityFps }?.bc ?: ballisticCoefficient
+    }
+
     companion object {
         fun combine(
             firearm: FirearmSetup,
@@ -226,7 +263,9 @@ data class RifleProfile(
             suppressorName = suppressor?.name ?: "",
             weaponMode = if (firearm.category == FirearmCategory.BOW_OTHER) WeaponMode.BOW else scope.weaponMode,
             dragModel = ammo.dragModel,
-            ballisticCoefficient = ammo.ballisticCoefficient,
+            ballisticCoefficient = ammo.primaryBc(),
+            bcBands = ammo.bcBands,
+            dsfTable = ammo.dsfTable,
             muzzleVelocityFps = (ammo.muzzleVelocityFps + (suppressor?.mvShiftFps ?: 0.0)).coerceAtLeast(100.0),
             bulletWeightGrains = ammo.bulletWeightGrains,
             bulletDiameterInches = ammo.bulletDiameterInches,
@@ -253,6 +292,60 @@ data class RifleProfile(
 }
 
 @Serializable
+enum class WindMode(val label: String) {
+    SINGLE("Single Wind"),
+    THREE_ZONE("3-Zone Wind")
+}
+
+@Serializable
+data class WindZone(
+    val speedMph: Double = 5.0,
+    /** Wind clock direction relative to shooter (0=12 o'clock headwind, 90=3 o'clock from right). */
+    val directionDeg: Double = 90.0
+)
+
+/**
+ * Multi-zone wind banding: Single uniform wind (default) or 3-Zone (Near 0-33%, Mid 33-66%, Far 66-100%).
+ */
+@Serializable
+data class WindProfile(
+    val mode: WindMode = WindMode.SINGLE,
+    val near: WindZone = WindZone(5.0, 90.0),
+    val mid: WindZone = WindZone(5.0, 90.0),
+    val far: WindZone = WindZone(5.0, 90.0)
+) {
+    /**
+     * Computes the ballistic range-weighted vector average wind across Near (0-33%), Mid (33-66%),
+     * and Far (66-100%) zones for single-wind devices such as the Bushnell LBC1800.
+     * Downrange deflection leverage weights for 3 equal range bands are 5/9, 3/9, and 1/9.
+     */
+    fun rangeWeightedAverage(): WindZone {
+        val wNear = 5.0 / 9.0
+        val wMid = 3.0 / 9.0
+        val wFar = 1.0 / 9.0
+
+        val nRad = Math.toRadians(near.directionDeg)
+        val mRad = Math.toRadians(mid.directionDeg)
+        val fRad = Math.toRadians(far.directionDeg)
+
+        val vx = wNear * near.speedMph * kotlin.math.cos(nRad) +
+            wMid * mid.speedMph * kotlin.math.cos(mRad) +
+            wFar * far.speedMph * kotlin.math.cos(fRad)
+        val vz = wNear * near.speedMph * kotlin.math.sin(nRad) +
+            wMid * mid.speedMph * kotlin.math.sin(mRad) +
+            wFar * far.speedMph * kotlin.math.sin(fRad)
+
+        val avgSpeed = kotlin.math.sqrt(vx * vx + vz * vz)
+        val avgDeg = if (avgSpeed < 1e-4) {
+            near.directionDeg
+        } else {
+            ((Math.toDegrees(kotlin.math.atan2(vz, vx)) % 360.0) + 360.0) % 360.0
+        }
+        return WindZone(speedMph = avgSpeed, directionDeg = avgDeg)
+    }
+}
+
+@Serializable
 data class Atmosphere(
     val temperatureF: Double = 59.0,
     val pressureInHg: Double = 29.92,
@@ -270,8 +363,23 @@ data class Atmosphere(
     val gpsLatitude: Double? = null,
     val gpsLongitude: Double? = null,
     val weatherUpdatedAt: String? = null,
-    val manualWindOverride: Boolean = false
-)
+    val manualWindOverride: Boolean = false,
+    /** Optional multi-zone wind profile (null or SINGLE uses windSpeedMph/windDirectionDeg). */
+    val windProfile: WindProfile? = null
+) {
+    val isThreeZoneWind: Boolean
+        get() = windProfile?.mode == WindMode.THREE_ZONE
+
+    /** Effective single-wind vector (range-weighted average when 3-Zone Wind is active). */
+    fun effectiveSingleWind(): WindZone {
+        val wp = windProfile
+        return if (wp != null && wp.mode == WindMode.THREE_ZONE) {
+            wp.rangeWeightedAverage()
+        } else {
+            WindZone(windSpeedMph, windDirectionDeg)
+        }
+    }
+}
 
 @Serializable
 enum class DistanceUnit(val shortLabel: String, val fullLabel: String) {
@@ -390,12 +498,93 @@ data class BallisticSolution(
     val timeOfFlightSec: Double,
     val mach: Double,
     val stabilityFactorSg: Double = 1.5,
+    val appliedDsf: Double = 1.0,
     val densityAltitudeFt: Double,
     val reachedTarget: Boolean = true,
     /** True only when a supersonic-launched projectile drops below Mach 1.2 (transonic instability). */
     val isTransonicWarning: Boolean = false,
     val exceedsOnboard800YdLimit: Boolean = false
 )
+
+/**
+ * Single target inside a PRS / Field Stage Card (up to 10 targets per stage).
+ * Null wind overrides inherit the live solver atmosphere wind.
+ */
+@Serializable
+data class StageTarget(
+    val id: String = UUID.randomUUID().toString(),
+    val label: String = "T1",
+    val rangeYards: Double = 300.0,
+    val inclinationDeg: Double = 0.0,
+    val windSpeedMph: Double? = null,
+    val windDirectionDeg: Double? = null,
+    val moverSpeedMph: Double = 0.0,
+    val notes: String = ""
+)
+
+/**
+ * Named PRS / Field Multi-Target Stage Card persisted in DataStore.
+ */
+@Serializable
+data class StageCard(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "Stage 1",
+    val targets: List<StageTarget> = emptyList(),
+    val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+/**
+ * Cold Bore & Range Session Dope Log entry persisted in DataStore.
+ */
+@Serializable
+data class SessionLogEntry(
+    val id: String = UUID.randomUUID().toString(),
+    val timestampMs: Long = System.currentTimeMillis(),
+    val firearmId: String,
+    val firearmName: String,
+    val scopeId: String,
+    val scopeName: String,
+    val ammoId: String,
+    val ammoName: String,
+    val suppressorId: String? = null,
+    val suppressorName: String? = null,
+    val temperatureF: Double,
+    val stationPressureInHg: Double,
+    val densityAltitudeFt: Double,
+    val windSpeedMph: Double,
+    val windDirectionDeg: Double,
+    val targetRangeYards: Double,
+    val inclinationDeg: Double = 0.0,
+    val angularUnit: AngularUnit = AngularUnit.MRAD,
+    val predictedElevation: Double,
+    val predictedWindage: Double,
+    val actualElevation: Double,
+    val actualWindage: Double,
+    val isColdBore: Boolean = false,
+    val notes: String = ""
+)
+
+/**
+ * Versioned full-arsenal JSON backup payload (schemaVersion = 1).
+ */
+@Serializable
+data class ArsenalBackup(
+    val schemaVersion: Int = 1,
+    val exportedAtMs: Long = System.currentTimeMillis(),
+    val appVersion: String = "1.0.0",
+    val firearms: List<FirearmSetup> = emptyList(),
+    val scopes: List<ScopeSetup> = emptyList(),
+    val ammoLoads: List<AmmoLoad> = emptyList(),
+    val suppressors: List<SuppressorSetup> = emptyList(),
+    val stageCards: List<StageCard> = emptyList(),
+    val sessionLogs: List<SessionLogEntry> = emptyList(),
+    val preferences: UserPreferences = UserPreferences()
+)
+
+enum class BackupImportMode {
+    MERGE,
+    OVERWRITE
+}
 
 object DefaultProfiles {
 
@@ -567,6 +756,29 @@ object DefaultProfiles {
             poiShiftHorizontalInches = 0.0,
             isFavorite = true,
             notes = "G-Core 7075 aluminum monocore • 5.0\" • 2.5 oz • 1/2x28"
+        )
+    )
+
+    val starterStageCards: List<StageCard> = listOf(
+        StageCard(
+            id = "stage-nrl22-practice",
+            name = "NRL22 / Field Rimfire Stage",
+            targets = listOf(
+                StageTarget(id = "t-1", label = "T1", rangeYards = 50.0, inclinationDeg = 0.0, notes = "KYL Rack"),
+                StageTarget(id = "t-2", label = "T2", rangeYards = 100.0, inclinationDeg = 2.0, notes = "2\" Steel"),
+                StageTarget(id = "t-3", label = "T3", rangeYards = 150.0, inclinationDeg = -3.0, windSpeedMph = 6.0, windDirectionDeg = 90.0, notes = "Barricade"),
+                StageTarget(id = "t-4", label = "T4", rangeYards = 200.0, inclinationDeg = 4.0, windSpeedMph = 8.0, windDirectionDeg = 75.0, notes = "Bonus Plate")
+            )
+        ),
+        StageCard(
+            id = "stage-prs-centerfire",
+            name = "PRS Centerfire 4-Target",
+            targets = listOf(
+                StageTarget(id = "cf-1", label = "T1", rangeYards = 315.0, inclinationDeg = 4.0, windSpeedMph = 8.0, windDirectionDeg = 75.0, notes = "Near Berm"),
+                StageTarget(id = "cf-2", label = "T2", rangeYards = 480.0, inclinationDeg = -2.0, windSpeedMph = 10.0, windDirectionDeg = 90.0, notes = "Mid Saddle"),
+                StageTarget(id = "cf-3", label = "T3", rangeYards = 640.0, inclinationDeg = 0.0, windSpeedMph = 12.0, windDirectionDeg = 105.0, notes = "Ridge IPSC"),
+                StageTarget(id = "cf-4", label = "T4", rangeYards = 810.0, inclinationDeg = 3.0, windSpeedMph = 14.0, windDirectionDeg = 90.0, moverSpeedMph = 3.0, notes = "Far Mover")
+            )
         )
     )
 

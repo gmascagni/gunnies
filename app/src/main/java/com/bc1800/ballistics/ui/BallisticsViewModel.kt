@@ -1,30 +1,42 @@
 package com.bc1800.ballistics.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bc1800.ballistics.ble.BleUiState
 import com.bc1800.ballistics.ble.RangefinderBleManager
+import com.bc1800.ballistics.data.ArsenalBackupCodec
 import com.bc1800.ballistics.data.BallisticsRepository
+import com.bc1800.ballistics.data.UnitFormatters
 import com.bc1800.ballistics.data.WeatherService
 import com.bc1800.ballistics.engine.BallisticEngine
 import com.bc1800.ballistics.model.AmmoLoad
 import com.bc1800.ballistics.model.AngularUnit
 import com.bc1800.ballistics.model.AppThemeMode
+import com.bc1800.ballistics.model.ArsenalBackup
 import com.bc1800.ballistics.model.Atmosphere
+import com.bc1800.ballistics.model.BackupImportMode
 import com.bc1800.ballistics.model.BallisticSolution
 import com.bc1800.ballistics.model.DefaultProfiles
 import com.bc1800.ballistics.model.DistanceUnit
+import com.bc1800.ballistics.model.DsfPoint
 import com.bc1800.ballistics.model.FirearmSetup
 import com.bc1800.ballistics.model.PressureUnit
 import com.bc1800.ballistics.model.RifleProfile
 import com.bc1800.ballistics.model.ScopeSetup
+import com.bc1800.ballistics.model.SessionLogEntry
+import com.bc1800.ballistics.model.StageCard
+import com.bc1800.ballistics.model.StageTarget
 import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.TemperatureUnit
 import com.bc1800.ballistics.model.UiTextScale
 import com.bc1800.ballistics.model.UserPreferences
 import com.bc1800.ballistics.model.VelocityUnit
+import com.bc1800.ballistics.model.WindMode
+import com.bc1800.ballistics.model.WindProfile
 import com.bc1800.ballistics.model.WindUnit
+import com.bc1800.ballistics.model.WindZone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,6 +50,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -51,12 +64,21 @@ data class SolverInputState(
     val isFetchingWeather: Boolean = false
 )
 
+data class StageTargetSolution(
+    val target: StageTarget,
+    val solution: BallisticSolution
+)
+
 data class AppUiState(
     val preferences: UserPreferences = UserPreferences(),
     val firearms: List<FirearmSetup> = DefaultProfiles.starterFirearms,
     val scopes: List<ScopeSetup> = DefaultProfiles.starterScopes,
     val ammoLoads: List<AmmoLoad> = DefaultProfiles.starterAmmo,
     val suppressors: List<SuppressorSetup> = DefaultProfiles.starterSuppressors,
+    val stageCards: List<StageCard> = DefaultProfiles.starterStageCards,
+    val activeStageCard: StageCard = DefaultProfiles.starterStageCards.first(),
+    val stageSolutions: List<StageTargetSolution> = emptyList(),
+    val sessionLogs: List<SessionLogEntry> = emptyList(),
     val activeFirearm: FirearmSetup = DefaultProfiles.starterFirearms.first(),
     val activeScope: ScopeSetup = DefaultProfiles.starterScopes.first(),
     val activeAmmo: AmmoLoad = DefaultProfiles.starterAmmo.first(),
@@ -83,6 +105,12 @@ private data class CoreSetupData(
     val suppressors: List<SuppressorSetup>
 )
 
+private data class FieldWorkflowData(
+    val stageCards: List<StageCard>,
+    val activeStageCardId: String?,
+    val sessionLogs: List<SessionLogEntry>
+)
+
 private data class BallisticCalcRequest(
     val activeProfile: RifleProfile,
     val atmosphere: Atmosphere,
@@ -94,13 +122,15 @@ private data class BallisticCalcRequest(
     val maxUnits: Int,
     val includeSpinDrift: Boolean,
     val includeCoriolis: Boolean,
-    val includeAeroJump: Boolean
+    val includeAeroJump: Boolean,
+    val activeStageTargets: List<StageTarget>
 )
 
 private data class BallisticCalcOutput(
     val solution: BallisticSolution,
     val mpbrYards: Double,
-    val rangeCard: List<BallisticSolution>
+    val rangeCard: List<BallisticSolution>,
+    val stageSolutions: List<StageTargetSolution>
 )
 
 class BallisticsViewModel(application: Application) : AndroidViewModel(application) {
@@ -109,6 +139,7 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
     val bleManager = RangefinderBleManager(application.applicationContext)
 
     private val _solverInput = MutableStateFlow(SolverInputState())
+    private val _activeStageCardId = MutableStateFlow<String?>(null)
     private val _snackbar = MutableStateFlow<String?>(null)
     private var userModifiedAtmo = false
 
@@ -137,7 +168,8 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
                     inclinationDeg = reading.angleDegrees?.coerceIn(-75.0, 75.0) ?: current.inclinationDeg
                 )
             }
-            showMessage("Rangefinder: ${reading.distanceYards.toInt()} yd")
+            val angSuffix = reading.angleDegrees?.let { String.format(Locale.US, " (%+.0f°)", it) } ?: ""
+            showMessage("Rangefinder: ${reading.distanceYards.toInt()} yd$angSuffix")
         }
     }
 
@@ -157,11 +189,24 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
+    private val workflowDataFlow = combine(
+        repository.stageCardsFlow,
+        _activeStageCardId,
+        repository.sessionLogsFlow
+    ) { stages, activeStageId, logs ->
+        FieldWorkflowData(
+            stageCards = stages,
+            activeStageCardId = activeStageId,
+            sessionLogs = logs
+        )
+    }
+
     // Isolated physics pipeline running on Dispatchers.Default — never triggered by BLE packets, themes, or snackbars!
     private val ballisticsCalcFlow = combine(
         coreDataFlow,
-        _solverInput
-    ) { core, input ->
+        _solverInput,
+        workflowDataFlow
+    ) { core, input, wf ->
         val activeFirearm = core.firearms.firstOrNull { it.id == core.prefs.activeFirearmId } ?: core.firearms.first()
         val activeScope = core.scopes.firstOrNull { it.id == core.prefs.activeScopeId } ?: core.scopes.first()
         val activeAmmo = core.ammoLoads.firstOrNull { it.id == core.prefs.activeAmmoId } ?: core.ammoLoads.first()
@@ -169,6 +214,9 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
             core.suppressors.firstOrNull { it.id == id }
         }
         val combinedProfile = RifleProfile.combine(activeFirearm, activeScope, activeAmmo, activeSuppressor)
+        val activeStage = wf.stageCards.firstOrNull { it.id == wf.activeStageCardId }
+            ?: wf.stageCards.firstOrNull()
+            ?: StageCard(id = "empty-stage", name = "New Stage", targets = emptyList())
 
         BallisticCalcRequest(
             activeProfile = combinedProfile,
@@ -181,7 +229,8 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
             maxUnits = core.prefs.rangeCardMaxYards,
             includeSpinDrift = core.prefs.includeSpinDrift,
             includeCoriolis = core.prefs.includeCoriolis,
-            includeAeroJump = core.prefs.includeAeroJump
+            includeAeroJump = core.prefs.includeAeroJump,
+            activeStageTargets = activeStage.targets
         )
     }
         .distinctUntilChanged()
@@ -216,17 +265,44 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
                 cachedZeroAngleRad = zeroAngle,
                 options = options
             )
-            BallisticCalcOutput(sol, mpbr, card)
+            val stageSols = req.activeStageTargets.map { target ->
+                StageTargetSolution(
+                    target = target,
+                    solution = BallisticEngine.solveStageTarget(
+                        profile = req.activeProfile,
+                        baseAtmosphere = req.atmosphere,
+                        target = target,
+                        cachedZeroAngleRad = zeroAngle,
+                        includeSpinDrift = req.includeSpinDrift,
+                        includeCoriolis = req.includeCoriolis,
+                        includeAeroJump = req.includeAeroJump
+                    )
+                )
+            }
+            BallisticCalcOutput(sol, mpbr, card, stageSols)
         }
         .flowOn(Dispatchers.Default)
+
+    private data class AuxiliaryUiData(
+        val workflow: FieldWorkflowData,
+        val ble: BleUiState,
+        val snackbar: String?
+    )
+
+    private val auxiliaryFlow = combine(
+        workflowDataFlow,
+        bleManager.state,
+        _snackbar
+    ) { wf, ble, snackbar ->
+        AuxiliaryUiData(wf, ble, snackbar)
+    }
 
     val uiState: StateFlow<AppUiState> = combine(
         coreDataFlow,
         _solverInput,
         ballisticsCalcFlow,
-        bleManager.state,
-        _snackbar
-    ) { core, input, calc, ble, snackbar ->
+        auxiliaryFlow
+    ) { core, input, calc, aux ->
         val activeFirearm = core.firearms.firstOrNull { it.id == core.prefs.activeFirearmId } ?: core.firearms.first()
         val activeScope = core.scopes.firstOrNull { it.id == core.prefs.activeScopeId } ?: core.scopes.first()
         val activeAmmo = core.ammoLoads.firstOrNull { it.id == core.prefs.activeAmmoId } ?: core.ammoLoads.first()
@@ -234,6 +310,9 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
             core.suppressors.firstOrNull { it.id == id }
         }
         val combinedProfile = RifleProfile.combine(activeFirearm, activeScope, activeAmmo, activeSuppressor)
+        val activeStage = aux.workflow.stageCards.firstOrNull { it.id == aux.workflow.activeStageCardId }
+            ?: aux.workflow.stageCards.firstOrNull()
+            ?: StageCard(id = "default-stage", name = "Stage 1", targets = emptyList())
 
         AppUiState(
             preferences = core.prefs,
@@ -241,6 +320,10 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
             scopes = core.scopes,
             ammoLoads = core.ammoLoads,
             suppressors = core.suppressors,
+            stageCards = aux.workflow.stageCards,
+            activeStageCard = activeStage,
+            stageSolutions = calc.stageSolutions,
+            sessionLogs = aux.workflow.sessionLogs,
             activeFirearm = activeFirearm,
             activeScope = activeScope,
             activeAmmo = activeAmmo,
@@ -250,8 +333,8 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
             solution = calc.solution,
             mpbrYards = calc.mpbrYards,
             rangeCard = calc.rangeCard,
-            bleState = ble,
-            snackbarMessage = snackbar
+            bleState = aux.ble,
+            snackbarMessage = aux.snackbar
         )
     }.stateIn(
         scope = viewModelScope,
@@ -323,11 +406,79 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
             current.copy(
                 atmosphere = atmo.copy(
                     manualWindOverride = enabled,
-                    windDirectionDeg = nextRelWind
+                    windDirectionDeg = nextRelWind,
+                    windProfile = if (!enabled) atmo.windProfile?.copy(mode = WindMode.SINGLE) else atmo.windProfile
                 )
             )
         }
         showMessage(if (enabled) "Wind: Manual Override" else "Wind: GPS Auto")
+    }
+
+    fun setWindMode(mode: WindMode) {
+        userModifiedAtmo = true
+        _solverInput.update { current ->
+            val atmo = current.atmosphere
+            val existing = atmo.windProfile
+            val baseZone = WindZone(atmo.windSpeedMph, atmo.windDirectionDeg)
+            val nextProfile = when (mode) {
+                WindMode.SINGLE -> existing?.copy(mode = WindMode.SINGLE)
+                WindMode.THREE_ZONE -> {
+                    if (existing != null) {
+                        existing.copy(mode = WindMode.THREE_ZONE)
+                    } else {
+                        WindProfile(
+                            mode = WindMode.THREE_ZONE,
+                            near = baseZone,
+                            mid = baseZone,
+                            far = baseZone
+                        )
+                    }
+                }
+            }
+            val effective = nextProfile?.takeIf { it.mode == WindMode.THREE_ZONE }?.rangeWeightedAverage()
+            current.copy(
+                atmosphere = atmo.copy(
+                    windProfile = nextProfile,
+                    windSpeedMph = effective?.speedMph ?: atmo.windSpeedMph,
+                    windDirectionDeg = effective?.directionDeg ?: atmo.windDirectionDeg,
+                    manualWindOverride = if (mode == WindMode.THREE_ZONE) true else atmo.manualWindOverride
+                )
+            )
+        }
+        showMessage(if (mode == WindMode.THREE_ZONE) "3-Zone Wind (Near/Mid/Far) Active" else "Single Wind Active")
+    }
+
+    /** Updates Near (0), Mid (1), or Far (2) wind zone and syncs the range-weighted summary vector. */
+    fun updateWindZone(zoneIndex: Int, speedMph: Double? = null, directionDeg: Double? = null) {
+        userModifiedAtmo = true
+        _solverInput.update { current ->
+            val atmo = current.atmosphere
+            val baseZone = WindZone(atmo.windSpeedMph, atmo.windDirectionDeg)
+            val wp = atmo.windProfile ?: WindProfile(
+                mode = WindMode.THREE_ZONE,
+                near = baseZone,
+                mid = baseZone,
+                far = baseZone
+            )
+            fun patch(z: WindZone): WindZone = z.copy(
+                speedMph = speedMph?.coerceIn(0.0, 50.0) ?: z.speedMph,
+                directionDeg = directionDeg?.let { ((it % 360.0) + 360.0) % 360.0 } ?: z.directionDeg
+            )
+            val updatedWp = when (zoneIndex) {
+                0 -> wp.copy(mode = WindMode.THREE_ZONE, near = patch(wp.near))
+                1 -> wp.copy(mode = WindMode.THREE_ZONE, mid = patch(wp.mid))
+                else -> wp.copy(mode = WindMode.THREE_ZONE, far = patch(wp.far))
+            }
+            val avg = updatedWp.rangeWeightedAverage()
+            current.copy(
+                atmosphere = atmo.copy(
+                    windProfile = updatedWp,
+                    windSpeedMph = avg.speedMph,
+                    windDirectionDeg = avg.directionDeg,
+                    manualWindOverride = true
+                )
+            )
+        }
     }
 
     fun setManualWindDirectionDeg(clockDeg: Double) {
@@ -379,19 +530,21 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
                 var finalSummary = weather.summary
                 _solverInput.update { current ->
                     val prev = current.atmosphere
-                    val merged = if (prev.manualWindOverride) {
+                    val keepManual = prev.manualWindOverride || prev.isThreeZoneWind
+                    val merged = if (keepManual) {
                         weather.atmosphere.copy(
                             windSpeedMph = prev.windSpeedMph,
                             windGustMph = prev.windGustMph,
                             windDirectionDeg = prev.windDirectionDeg,
+                            windProfile = prev.windProfile,
                             shootingBearingDeg = prev.shootingBearingDeg,
-                            manualWindOverride = true
+                            manualWindOverride = prev.manualWindOverride
                         )
                     } else {
                         weather.atmosphere
                     }
                     finalAtmo = merged
-                    finalSummary = if (prev.manualWindOverride) "${weather.summary} • Manual wind kept" else weather.summary
+                    finalSummary = if (keepManual) "${weather.summary} • Manual wind kept" else weather.summary
                     current.copy(
                         atmosphere = merged,
                         isFetchingWeather = false,
@@ -421,6 +574,226 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             repository.saveAmmo(activeAmmo.copy(muzzleVelocityFps = roundedBaseMv))
             showMessage("Trued MV saved: ${roundedBaseMv.toInt()} fps for ${activeAmmo.name}")
+        }
+    }
+
+    /** Applies a trued Transonic/Subsonic Drop Scale Factor node onto the active Ammo load and persists it. */
+    fun applyTruedDsf(point: DsfPoint) {
+        val activeAmmo = uiState.value.activeAmmo
+        val mergedTable = BallisticEngine.mergeDsfPoint(activeAmmo.dsfTable, point)
+        viewModelScope.launch {
+            repository.saveAmmo(activeAmmo.copy(dsfTable = mergedTable))
+            showMessage(
+                String.format(
+                    Locale.US,
+                    "DSF %.3f @ M%.2f saved for %s",
+                    point.dropScaleFactor,
+                    point.mach,
+                    activeAmmo.name
+                )
+            )
+        }
+    }
+
+    fun clearActiveAmmoDsf() {
+        val activeAmmo = uiState.value.activeAmmo
+        viewModelScope.launch {
+            repository.saveAmmo(activeAmmo.copy(dsfTable = emptyList()))
+            showMessage("Cleared DSF table for ${activeAmmo.name}")
+        }
+    }
+
+    // --- PRS / Field Stage Card Management ---
+
+    fun selectStageCard(stageId: String) {
+        _activeStageCardId.value = stageId
+    }
+
+    fun createStageCard(name: String) {
+        val trimmed = name.trim().ifBlank { "Stage ${uiState.value.stageCards.size + 1}" }
+        val newCard = StageCard(
+            id = UUID.randomUUID().toString(),
+            name = trimmed,
+            targets = listOf(
+                StageTarget(label = "T1", rangeYards = uiState.value.solverInput.rangeYards.roundToInt().toDouble())
+            )
+        )
+        viewModelScope.launch {
+            repository.saveStageCard(newCard)
+            _activeStageCardId.value = newCard.id
+            showMessage("Created stage: ${newCard.name}")
+        }
+    }
+
+    fun renameStageCard(stageId: String, newName: String) {
+        val card = uiState.value.stageCards.firstOrNull { it.id == stageId } ?: return
+        val trimmed = newName.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            repository.saveStageCard(card.copy(name = trimmed))
+            showMessage("Renamed stage: $trimmed")
+        }
+    }
+
+    fun deleteStageCard(stageId: String) {
+        viewModelScope.launch {
+            if (repository.deleteStageCard(stageId)) {
+                if (_activeStageCardId.value == stageId) {
+                    _activeStageCardId.value = null
+                }
+                showMessage("Stage card deleted")
+            }
+        }
+    }
+
+    fun saveStageTarget(stageId: String, target: StageTarget) {
+        val card = uiState.value.stageCards.firstOrNull { it.id == stageId } ?: return
+        val exists = card.targets.any { it.id == target.id }
+        if (!exists && card.targets.size >= 10) {
+            showMessage("Maximum 10 targets per stage card")
+            return
+        }
+        val updatedTargets = if (exists) {
+            card.targets.map { if (it.id == target.id) target else it }
+        } else {
+            card.targets + target
+        }
+        viewModelScope.launch {
+            repository.saveStageCard(card.copy(targets = updatedTargets))
+            showMessage(if (exists) "Updated ${target.label}" else "Added ${target.label}")
+        }
+    }
+
+    fun deleteStageTarget(stageId: String, targetId: String) {
+        val card = uiState.value.stageCards.firstOrNull { it.id == stageId } ?: return
+        val updatedTargets = card.targets.filterNot { it.id == targetId }
+        viewModelScope.launch {
+            repository.saveStageCard(card.copy(targets = updatedTargets))
+            showMessage("Target removed")
+        }
+    }
+
+    fun moveStageTarget(stageId: String, fromIndex: Int, toIndex: Int) {
+        val card = uiState.value.stageCards.firstOrNull { it.id == stageId } ?: return
+        if (fromIndex !in card.targets.indices || toIndex !in card.targets.indices || fromIndex == toIndex) return
+        val mutable = card.targets.toMutableList()
+        val item = mutable.removeAt(fromIndex)
+        mutable.add(toIndex, item)
+        viewModelScope.launch {
+            repository.saveStageCard(card.copy(targets = mutable))
+        }
+    }
+
+    // --- Cold Bore & Range Session Dope Logbook ---
+
+    fun logShot(
+        actualElevation: Double,
+        actualWindage: Double,
+        isColdBore: Boolean,
+        notes: String
+    ) {
+        val state = uiState.value
+        val sol = state.solution ?: return
+        val atmo = state.solverInput.atmosphere
+        val air = BallisticEngine.computeAirState(atmo)
+        val effWind = atmo.effectiveSingleWind()
+        val unit = state.preferences.angularUnit
+
+        val entry = SessionLogEntry(
+            id = UUID.randomUUID().toString(),
+            timestampMs = System.currentTimeMillis(),
+            firearmId = state.activeFirearm.id,
+            firearmName = state.activeFirearm.name,
+            scopeId = state.activeScope.id,
+            scopeName = state.activeScope.name,
+            ammoId = state.activeAmmo.id,
+            ammoName = state.activeAmmo.name,
+            suppressorId = state.activeSuppressor?.id,
+            suppressorName = state.activeSuppressor?.name,
+            temperatureF = atmo.temperatureF,
+            stationPressureInHg = air.stationPressureInHg,
+            densityAltitudeFt = air.densityAltitudeFt,
+            windSpeedMph = effWind.speedMph,
+            windDirectionDeg = effWind.directionDeg,
+            targetRangeYards = state.solverInput.rangeYards,
+            inclinationDeg = state.solverInput.inclinationDeg,
+            angularUnit = unit,
+            predictedElevation = UnitFormatters.elevationValue(sol, unit),
+            predictedWindage = UnitFormatters.windageValue(sol, unit),
+            actualElevation = actualElevation,
+            actualWindage = actualWindage,
+            isColdBore = isColdBore,
+            notes = notes.trim()
+        )
+        viewModelScope.launch {
+            repository.addSessionLog(entry)
+            showMessage(if (isColdBore) "Cold Bore shot logged (${state.activeFirearm.name})" else "Shot logged to Dope Logbook")
+        }
+    }
+
+    fun deleteSessionLog(entryId: String) {
+        viewModelScope.launch {
+            if (repository.deleteSessionLog(entryId)) {
+                showMessage("Log entry deleted")
+            }
+        }
+    }
+
+    // --- Full Arsenal JSON Export / Import (Android SAF) ---
+
+    fun exportArsenalToUri(uri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                val jsonPayload = repository.exportBackupJson()
+                withContext(Dispatchers.IO) {
+                    val os = getApplication<Application>().contentResolver.openOutputStream(uri)
+                        ?: error("Unable to open output stream for backup file")
+                    os.use { stream ->
+                        stream.write(jsonPayload.toByteArray(Charsets.UTF_8))
+                        stream.flush()
+                    }
+                }
+            }.onSuccess {
+                showMessage("Arsenal backup exported (.json)")
+            }.onFailure { err ->
+                showMessage("Export failed: ${err.message ?: "unknown error"}")
+            }
+        }
+    }
+
+    fun readBackupPreviewFromUri(
+        uri: Uri,
+        onResult: (Result<Pair<String, ArsenalBackup>>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val res = runCatching {
+                val raw = withContext(Dispatchers.IO) {
+                    val input = getApplication<Application>().contentResolver.openInputStream(uri)
+                        ?: error("Unable to open backup file")
+                    input.use { it.readBytes().toString(Charsets.UTF_8) }
+                }
+                val parsed = ArsenalBackupCodec.decode(raw).getOrThrow()
+                raw to parsed
+            }
+            onResult(res)
+        }
+    }
+
+    fun importArsenalJson(rawJson: String, mode: BackupImportMode) {
+        viewModelScope.launch {
+            val result = repository.importBackupJson(rawJson, mode)
+            result.onSuccess { summary ->
+                val msg = if (mode == BackupImportMode.MERGE) {
+                    "Merged backup: +${summary.firearmsCount} guns, +${summary.scopesCount} scopes, " +
+                        "+${summary.ammoCount} ammo, +${summary.stageCardsCount} stages, +${summary.sessionLogsCount} logs"
+                } else {
+                    "Restored backup: ${summary.firearmsCount} guns, ${summary.scopesCount} scopes, " +
+                        "${summary.ammoCount} ammo, ${summary.stageCardsCount} stages, ${summary.sessionLogsCount} logs"
+                }
+                showMessage(msg)
+            }.onFailure { err ->
+                showMessage("Import failed: ${err.message ?: "invalid backup JSON"}")
+            }
         }
     }
 

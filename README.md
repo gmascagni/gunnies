@@ -1,4 +1,4 @@
-# BC1800 Ballistics
+# Gunnies Ballistics
 
 Native Android precision ballistics solver and **Bushnell Bone Collector 1800 (`LBC1800` / `BC-xxxxxx`)** Bluetooth Low Energy (BLE) companion app built with Kotlin and Jetpack Compose.
 

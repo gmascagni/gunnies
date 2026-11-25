@@ -1,6 +1,8 @@
 package com.bc1800.ballistics.ui.screens
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -33,7 +35,9 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -66,6 +70,8 @@ import com.bc1800.ballistics.ble.BleConnectionState
 import com.bc1800.ballistics.ble.GattCharacteristicInfo
 import com.bc1800.ballistics.model.AngularUnit
 import com.bc1800.ballistics.model.AppThemeMode
+import com.bc1800.ballistics.model.ArsenalBackup
+import com.bc1800.ballistics.model.BackupImportMode
 import com.bc1800.ballistics.model.DistanceUnit
 import com.bc1800.ballistics.model.PressureUnit
 import com.bc1800.ballistics.model.TemperatureUnit
@@ -788,6 +794,39 @@ fun PreferencesScreen(
     viewModel: BallisticsViewModel
 ) {
     val prefs = uiState.preferences
+    var pendingImport by remember { mutableStateOf<Pair<String, ArsenalBackup>?>(null) }
+    var importError by remember { mutableStateOf<String?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.exportArsenalToUri(uri)
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.readBackupPreviewFromUri(uri) { result ->
+                result.onSuccess { pair ->
+                    importError = null
+                    pendingImport = pair
+                }.onFailure { err ->
+                    importError = err.message ?: "Selected file is not a valid Gunnies Ballistics backup (.json)"
+                }
+            }
+        }
+    }
+
+    val launchExport = {
+        val dateTag = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+        exportLauncher.launch("gunnies_ballistics_backup_$dateTag.json")
+    }
+    val launchImport = {
+        importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWide = maxWidth >= 600.dp
@@ -807,6 +846,12 @@ fun PreferencesScreen(
                 ) {
                     DisplayAndScalingCard(prefs = prefs, viewModel = viewModel)
                     SolverPhysicsCard(prefs = prefs, viewModel = viewModel)
+                    ArsenalBackupCard(
+                        uiState = uiState,
+                        importError = importError,
+                        onExport = launchExport,
+                        onImport = launchImport
+                    )
                     Spacer(Modifier.height(12.dp))
                 }
 
@@ -828,9 +873,115 @@ fun PreferencesScreen(
             ) {
                 item { DisplayAndScalingCard(prefs = prefs, viewModel = viewModel) }
                 item { SolverPhysicsCard(prefs = prefs, viewModel = viewModel) }
+                item {
+                    ArsenalBackupCard(
+                        uiState = uiState,
+                        importError = importError,
+                        onExport = launchExport,
+                        onImport = launchImport
+                    )
+                }
                 item { BallisticUnitsCard(prefs = prefs, viewModel = viewModel) }
                 item { Spacer(Modifier.height(16.dp)) }
             }
+        }
+    }
+
+    pendingImport?.let { (rawJson, preview) ->
+        AlertDialog(
+            onDismissRequest = { pendingImport = null },
+            title = { Text("Import Arsenal Backup") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Backup v${preview.schemaVersion} ready to import:",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "${preview.firearms.size} Guns • ${preview.scopes.size} Scopes • " +
+                                "${preview.ammoLoads.size} Ammo • ${preview.suppressors.size} Suppressors • " +
+                                "${preview.stageCards.size} Stage Cards • ${preview.sessionLogs.size} Session Logs",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                    Text(
+                        text = "• Merge keeps all your existing profiles and adds any new items from the backup.\n" +
+                            "• Overwrite replaces your entire database and preferences with the backup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        viewModel.importArsenalJson(rawJson, BackupImportMode.OVERWRITE)
+                        pendingImport = null
+                    }) { Text("Overwrite") }
+                    Button(onClick = {
+                        viewModel.importArsenalJson(rawJson, BackupImportMode.MERGE)
+                        pendingImport = null
+                    }) { Text("Merge") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingImport = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ArsenalBackupCard(
+    uiState: AppUiState,
+    importError: String?,
+    onExport: () -> Unit,
+    onImport: () -> Unit
+) {
+    SettingsCard(title = "ARSENAL BACKUP & RESTORE (JSON)") {
+        Text(
+            text = "${uiState.firearms.size} Guns • ${uiState.scopes.size} Scopes • ${uiState.ammoLoads.size} Ammo • " +
+                "${uiState.suppressors.size} Cans • ${uiState.stageCards.size} Stages • ${uiState.sessionLogs.size} Logs",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = "Export your complete trued arsenal, Multi-BC/DSF data, Stage Cards, Cold Bore logs, and Preferences to a versioned .json file.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = onExport,
+                modifier = Modifier.weight(1f),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Export (.json)")
+            }
+            OutlinedButton(
+                onClick = onImport,
+                modifier = Modifier.weight(1f),
+                shape = MaterialTheme.shapes.small
+            ) {
+                Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Import (.json)")
+            }
+        }
+        importError?.let { err ->
+            Text(err, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
     }
 }

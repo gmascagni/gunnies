@@ -492,7 +492,7 @@ class RangefinderBleManager(private val context: Context) {
     fun buildDiagnosticDump(): String {
         val s = _state.value
         val sb = StringBuilder()
-        sb.appendLine("=== BC1800 Ballistics BLE Diagnostic Dump ===")
+        sb.appendLine("=== Gunnies Ballistics BLE Diagnostic Dump ===")
         sb.appendLine("Device: ${s.connectedDeviceName ?: "None"} (${s.connectedDeviceAddress ?: "N/A"})")
         sb.appendLine("State: ${s.connectionState.label}")
         sb.appendLine("Firmware: ${s.firmwareVersion ?: "Unknown"}")

@@ -79,6 +79,7 @@ import com.bc1800.ballistics.data.UnitFormatters
 import com.bc1800.ballistics.model.AmmoCategory
 import com.bc1800.ballistics.model.AmmoLoad
 import com.bc1800.ballistics.model.AppThemeMode
+import com.bc1800.ballistics.model.BcBand
 import com.bc1800.ballistics.model.ClickUnit
 import com.bc1800.ballistics.model.DragModel
 import com.bc1800.ballistics.model.FirearmCategory
@@ -493,11 +494,13 @@ fun ProfilesScreen(
                             val tempNote = if (kotlin.math.abs(ammo.mvTempSensitivityFpsPerF) > 0.01) {
                                 String.format(Locale.US, " • %.2f fps/°F", ammo.mvTempSensitivityFpsPerF)
                             } else ""
+                            val multiBcNote = if (ammo.bcBands.isNotEmpty()) " • ${ammo.bcBands.size}-Band BC" else ""
+                            val dsfNote = if (ammo.dsfTable.isNotEmpty()) " • DSF(${ammo.dsfTable.size})" else ""
                             ArsenalItemCard(
                                 title = ammo.name,
                                 subtitle = "${ammo.category.label} • ${ammo.caliber} • ${ammo.dragModel.label} ${
-                                    String.format(Locale.US, "%.3f", ammo.ballisticCoefficient)
-                                } • ${UnitFormatters.formatVelocity(ammo.muzzleVelocityFps, uiState.preferences.velocityUnit)}$tempNote",
+                                    String.format(Locale.US, "%.3f", ammo.primaryBc())
+                                } • ${UnitFormatters.formatVelocity(ammo.muzzleVelocityFps, uiState.preferences.velocityUnit)}$multiBcNote$dsfNote$tempNote",
                                 notes = ammo.notes,
                                 isActive = isActive,
                                 isFavorite = ammo.isFavorite,
@@ -1306,6 +1309,15 @@ private fun AmmoEditorDialog(
     var chronoTemp by remember { mutableStateOf(initial.chronoTempF.toInt().toString()) }
     var isFavorite by remember { mutableStateOf(initial.isFavorite) }
     var notes by remember { mutableStateOf(initial.notes) }
+    var multiBcExpanded by remember { mutableStateOf(initial.bcBands.isNotEmpty()) }
+    var bandRows by remember {
+        mutableStateOf(
+            initial.bcBands
+                .sortedByDescending { it.minVelocityFps }
+                .take(5)
+                .map { it.minVelocityFps.toInt().toString() to String.format(Locale.US, "%.3f", it.bc) }
+        )
+    }
     var errorText by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
@@ -1415,6 +1427,119 @@ private fun AmmoEditorDialog(
                         modifier = Modifier.weight(1f)
                     )
                 }
+
+                // Expandable Multi-BC (Velocity Bands — up to 5 Sierra/Strelok pairs)
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { multiBcExpanded = !multiBcExpanded },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Multi-BC (Velocity Bands)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = if (bandRows.isEmpty()) "Single BC mode (tap to add up to 5 bands)"
+                                    else "${bandRows.size} velocity band(s) active • Highest BC synced to LBC1800",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = if (multiBcExpanded) "Hide" else "Edit",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        if (multiBcExpanded) {
+                            bandRows.forEachIndexed { idx, (velStr, bcStr) ->
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = velStr,
+                                        onValueChange = { newVel ->
+                                            bandRows = bandRows.toMutableList().also { list ->
+                                                list[idx] = newVel to list[idx].second
+                                            }
+                                        },
+                                        label = { Text("Min fps") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = bcStr,
+                                        onValueChange = { newBc ->
+                                            bandRows = bandRows.toMutableList().also { list ->
+                                                list[idx] = list[idx].first to newBc
+                                            }
+                                        },
+                                        label = { Text("BC") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            bandRows = bandRows.toMutableList().also { it.removeAt(idx) }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Remove band", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                            if (bandRows.size < 5) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val suggestedVel = when (bandRows.size) {
+                                            0 -> (mv.toDoubleOrNull()?.times(0.85)?.toInt() ?: 2400).toString()
+                                            1 -> (mv.toDoubleOrNull()?.times(0.65)?.toInt() ?: 1900).toString()
+                                            2 -> (mv.toDoubleOrNull()?.times(0.48)?.toInt() ?: 1500).toString()
+                                            3 -> "1200"
+                                            else -> "0"
+                                        }
+                                        val suggestedBc = bc.toDoubleOrNull()?.let {
+                                            String.format(Locale.US, "%.3f", (it - bandRows.size * 0.015).coerceAtLeast(0.05))
+                                        } ?: "0.250"
+                                        bandRows = bandRows + (suggestedVel to suggestedBc)
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Add Velocity Band (${bandRows.size}/5)")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (initial.dsfTable.isNotEmpty()) {
+                    Text(
+                        text = "Active DSF Nodes: " + initial.dsfTable.joinToString(", ") {
+                            String.format(Locale.US, "M%.2f→%.3f", it.mach, it.dropScaleFactor)
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Favorite Ammo (★)", modifier = Modifier.weight(1f))
                     Switch(checked = isFavorite, onCheckedChange = { isFavorite = it })
@@ -1438,6 +1563,13 @@ private fun AmmoEditorDialog(
                 val parsedLen = bulletLen.trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull()
                 val parsedSens = mvTempSens.toDoubleOrNull() ?: 0.0
                 val parsedChrono = chronoTemp.toDoubleOrNull() ?: 59.0
+                val parsedBands = bandRows.mapNotNull { (vStr, bStr) ->
+                    val v = vStr.trim().toDoubleOrNull()
+                    val b = bStr.trim().toDoubleOrNull()
+                    if (v != null && b != null && v >= 0.0 && b in 0.02..2.0) BcBand(v, b) else null
+                }.sortedByDescending { it.minVelocityFps }
+                val invalidBand = bandRows.isNotEmpty() && parsedBands.size != bandRows.size
+
                 when {
                     name.isBlank() -> errorText = "Please enter an ammo name."
                     parsedBc == null || parsedBc <= 0.01 || parsedBc > 2.0 -> errorText = "BC must be between 0.02 and 2.0."
@@ -1446,13 +1578,15 @@ private fun AmmoEditorDialog(
                     parsedDia == null || parsedDia <= 0.05 -> errorText = "Enter bullet diameter in inches."
                     bulletLen.isNotBlank() && (parsedLen == null || parsedLen !in 0.1..3.5) ->
                         errorText = "Bullet length must be 0.1–3.5 in or blank."
+                    invalidBand -> errorText = "Each Multi-BC row needs valid Min fps (>=0) and BC (0.02–2.0)."
                     else -> onSave(
                         initial.copy(
                             name = name.trim(),
                             caliber = caliber.trim().ifBlank { "Custom" },
                             category = category,
                             dragModel = dragModel,
-                            ballisticCoefficient = parsedBc,
+                            ballisticCoefficient = parsedBands.firstOrNull()?.bc ?: parsedBc,
+                            bcBands = parsedBands,
                             muzzleVelocityFps = parsedMv,
                             bulletWeightGrains = parsedWt,
                             bulletDiameterInches = parsedDia,
@@ -1645,6 +1779,7 @@ private fun SuppressorEditorDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CatalogBrowserDialog(
     tabIndex: Int,
@@ -1656,57 +1791,116 @@ private fun CatalogBrowserDialog(
     onAddSuppressor: (SuppressorSetup) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    val q = query.trim().lowercase(Locale.US)
+    var quickTag by remember(tabIndex) { mutableStateOf("All") }
+    val qTokens = remember(query) {
+        query.trim().lowercase(Locale.US).split(Regex("\\s+")).filter { it.isNotEmpty() }
+    }
 
-    val gunMatches = remember(tabIndex, q) {
+    fun matchesTokens(haystack: String): Boolean {
+        if (qTokens.isEmpty()) return true
+        val lower = haystack.lowercase(Locale.US)
+        return qTokens.all { lower.contains(it) }
+    }
+
+    val quickTags = remember(tabIndex) {
+        when (tabIndex) {
+            0 -> listOf("All", "Rimfire", "AR / Gas", "Bolt", "Handgun")
+            1 -> listOf("All", "Rifle Scope", "LPVO", "Red Dot", "Handgun")
+            2 -> listOf("All", ".22 LR", ".223/5.56", "6.5 CM", ".308", "Magnum", "Handgun", "Multi-BC")
+            else -> listOf("All", "Rimfire", "Rifle", "Pistol", "Multi-Cal")
+        }
+    }
+
+    val gunMatches = remember(tabIndex, qTokens, quickTag) {
         if (tabIndex != 0) emptyList()
-        else BallisticsCatalog.firearms.filter {
-            q.isEmpty() || it.name.lowercase(Locale.US).contains(q) ||
-                it.caliberHint.lowercase(Locale.US).contains(q) ||
-                it.category.label.lowercase(Locale.US).contains(q)
+        else BallisticsCatalog.firearms.filter { gun ->
+            val tagOk = when (quickTag) {
+                "Rimfire" -> gun.caliberHint.contains("22 LR", true) || gun.caliberHint.contains("17 HMR", true) || gun.caliberHint.contains("22 WMR", true)
+                "AR / Gas" -> gun.name.contains("AR-", true) || gun.name.contains("BCM", true) || gun.name.contains("Daniel", true) || gun.name.contains("Geissele", true) || gun.name.contains("MCX", true) || gun.name.contains("SCAR", true) || gun.name.contains("AK-", true) || gun.name.contains("Aero", true) || gun.name.contains("LMT", true) || gun.name.contains("SR-15", true)
+                "Bolt" -> gun.category == FirearmCategory.RIFLE && (gun.notes.contains("bolt", true) || gun.notes.contains("chassis", true) || gun.notes.contains("hunting", true) || gun.name.contains("Tikka", true) || gun.name.contains("Bergara", true) || gun.name.contains("Remington", true) || gun.name.contains("Savage", true))
+                "Handgun" -> gun.category == FirearmCategory.HANDGUN
+                else -> true
+            }
+            tagOk && matchesTokens("${gun.name} ${gun.caliberHint} ${gun.category.label} ${gun.notes}")
         }
     }
 
-    val scopeMatches = remember(tabIndex, q) {
+    val scopeMatches = remember(tabIndex, qTokens, quickTag) {
         if (tabIndex != 1) emptyList()
-        else BallisticsCatalog.scopes.filter {
-            q.isEmpty() || it.name.lowercase(Locale.US).contains(q) ||
-                it.scopeModel.lowercase(Locale.US).contains(q) ||
-                it.reticleType.label.lowercase(Locale.US).contains(q)
+        else BallisticsCatalog.scopes.filter { sc ->
+            val tagOk = when (quickTag) {
+                "Rifle Scope" -> sc.category == ScopeCategory.RIFLE_SCOPE && !sc.scopeModel.contains("LPVO", true) && !sc.name.contains("LPVO", true)
+                "LPVO" -> sc.scopeModel.contains("LPVO", true) || sc.name.contains("LPVO", true) || sc.name.contains("1-6", true) || sc.name.contains("1-8", true) || sc.name.contains("1-10", true)
+                "Red Dot" -> sc.category == ScopeCategory.RED_DOT_IRON
+                "Handgun" -> sc.category == ScopeCategory.HANDGUN_OPTIC
+                else -> true
+            }
+            tagOk && matchesTokens("${sc.name} ${sc.scopeModel} ${sc.reticleType.label} ${sc.clickUnit.label} ${sc.notes}")
         }
     }
 
-    val ammoMatches = remember(tabIndex, q) {
+    val ammoMatches = remember(tabIndex, qTokens, quickTag) {
         if (tabIndex != 2) emptyList()
-        else BallisticsCatalog.ammo.filter {
-            q.isEmpty() || it.name.lowercase(Locale.US).contains(q) ||
-                it.caliber.lowercase(Locale.US).contains(q) ||
-                it.category.label.lowercase(Locale.US).contains(q)
+        else BallisticsCatalog.ammo.filter { am ->
+            val tagOk = when (quickTag) {
+                ".22 LR" -> am.category == AmmoCategory.RIMFIRE
+                ".223/5.56" -> am.caliber.contains("223", true) || am.caliber.contains("5.56", true) || am.caliber.contains("300 Blackout", true) || am.caliber.contains("ARC", true) || am.caliber.contains("Grendel", true)
+                "6.5 CM" -> am.caliber.contains("6.5", true) || am.caliber.contains("6mm", true)
+                ".308" -> am.caliber.contains("308", true) || am.caliber.contains("30-06", true)
+                "Magnum" -> am.caliber.contains("Mag", true) || am.caliber.contains("PRC", true) || am.caliber.contains("Lapua", true)
+                "Handgun" -> am.category == AmmoCategory.HANDGUN
+                "Multi-BC" -> am.bcBands.isNotEmpty()
+                else -> true
+            }
+            tagOk && matchesTokens("${am.name} ${am.caliber} ${am.category.label} ${am.dragModel.label} ${am.notes}")
         }
     }
 
-    val suppressorMatches = remember(tabIndex, q) {
+    val suppressorMatches = remember(tabIndex, qTokens, quickTag) {
         if (tabIndex != 3) emptyList()
-        else BallisticsCatalog.suppressors.filter {
-            q.isEmpty() || it.name.lowercase(Locale.US).contains(q) ||
-                it.manufacturer.lowercase(Locale.US).contains(q) ||
-                it.caliberRating.lowercase(Locale.US).contains(q) ||
-                it.mountType.lowercase(Locale.US).contains(q) ||
-                it.category.label.lowercase(Locale.US).contains(q)
+        else BallisticsCatalog.suppressors.filter { supp ->
+            val tagOk = when (quickTag) {
+                "Rimfire" -> supp.category == SuppressorCategory.RIMFIRE
+                "Rifle" -> supp.category == SuppressorCategory.RIFLE
+                "Pistol" -> supp.category == SuppressorCategory.PISTOL
+                "Multi-Cal" -> supp.category == SuppressorCategory.MULTI_CAL
+                else -> true
+            }
+            tagOk && matchesTokens("${supp.name} ${supp.manufacturer} ${supp.caliberRating} ${supp.mountType} ${supp.category.label} ${supp.notes}")
         }
+    }
+
+    val totalCount = when (tabIndex) {
+        0 -> BallisticsCatalog.firearms.size
+        1 -> BallisticsCatalog.scopes.size
+        2 -> BallisticsCatalog.ammo.size
+        else -> BallisticsCatalog.suppressors.size
+    }
+    val shownCount = when (tabIndex) {
+        0 -> gunMatches.size
+        1 -> scopeMatches.size
+        2 -> ammoMatches.size
+        else -> suppressorMatches.size
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(
-                when (tabIndex) {
-                    0 -> "Firearms Catalog"
-                    1 -> "Scopes & Optics Catalog"
-                    2 -> "Factory Ammo Catalog"
-                    else -> "Suppressors Catalog"
-                }
-            )
+            Column {
+                Text(
+                    when (tabIndex) {
+                        0 -> "Firearms Catalog"
+                        1 -> "Scopes & Optics Catalog"
+                        2 -> "Factory Ammo Catalog"
+                        else -> "Suppressors Catalog"
+                    }
+                )
+                Text(
+                    text = "Showing $shownCount of $totalCount • Tap any item to add",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         },
         text = {
             Column(
@@ -1716,11 +1910,24 @@ private fun CatalogBrowserDialog(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = { Text("Search brand, model, or caliber...") },
+                    placeholder = { Text("Search brand, model, caliber, mount...") },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    quickTags.forEach { tag ->
+                        FilterChip(
+                            selected = quickTag == tag,
+                            onClick = { quickTag = tag },
+                            label = { Text(tag, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
 
                 LazyColumn(
                     modifier = Modifier
@@ -1756,9 +1963,10 @@ private fun CatalogBrowserDialog(
                         2 -> {
                             items(ammoMatches, key = { it.id }) { ammo ->
                                 val alreadyAdded = ammo.name.trim().lowercase(Locale.US) in existingNames
+                                val bandTag = if (ammo.bcBands.isNotEmpty()) " • ${ammo.bcBands.size}-Band BC" else ""
                                 CatalogEntryRow(
                                     title = ammo.name,
-                                    subtitle = "${ammo.caliber} • ${ammo.dragModel.label} ${ammo.ballisticCoefficient} • ${ammo.muzzleVelocityFps.toInt()} fps",
+                                    subtitle = "${ammo.caliber} • ${ammo.dragModel.label} ${ammo.primaryBc()} • ${ammo.muzzleVelocityFps.toInt()} fps$bandTag",
                                     accentColor = MaterialTheme.colorScheme.secondary,
                                     alreadyAdded = alreadyAdded,
                                     onClick = { onAddAmmo(ammo) }

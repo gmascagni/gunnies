@@ -212,7 +212,7 @@ object Lbc1800Protocol {
         latitudeDeg: Double = atmosphere.gpsLatitude ?: 35.0,
         moverSpeedMph: Double = 0.0
     ): String {
-        val bc = String.format(Locale.US, "%.3f", profile.ballisticCoefficient.coerceIn(0.01, 2.0))
+        val bc = String.format(Locale.US, "%.3f", profile.primaryBc().coerceIn(0.01, 2.0))
         val dragIdx = if (profile.dragModel == DragModel.G7) "00001" else "00000"
         val weight = String.format(Locale.US, "%05d", profile.bulletWeightGrains.roundToInt().coerceIn(1, 99999))
         val dia = String.format(Locale.US, "%.3f", profile.bulletDiameterInches.coerceIn(0.1, 1.0))
@@ -229,7 +229,18 @@ object Lbc1800Protocol {
             String.format(Locale.US, "%s%05.2f", twistSign, abs(profile.barrelTwistInches).coerceIn(1.0, 99.99))
         }
 
-        val dsf = "0.000,1.000,0.000,1.000,0.000,1.000,0.000,1.000,0.000,1.000,0.000,1.000"
+        val sortedDsf = profile.dsfTable
+            .filter { it.mach in 0.1..5.0 && it.dropScaleFactor in 0.5..1.5 }
+            .sortedBy { it.mach }
+            .take(6)
+        val dsf = (0 until 6).joinToString(",") { idx ->
+            val pt = sortedDsf.getOrNull(idx)
+            if (pt != null) {
+                String.format(Locale.US, "%.3f,%.3f", pt.mach, pt.dropScaleFactor)
+            } else {
+                "0.000,1.000"
+            }
+        }
         val gunSlot = "00001"
         val zVertSign = if (profile.zeroOffsetVerticalInches < 0) "-" else "+"
         val zHorizSign = if (profile.zeroOffsetHorizontalInches < 0) "-" else "+"
@@ -252,8 +263,9 @@ object Lbc1800Protocol {
         val tempF = String.format(Locale.US, "%.2f", atmosphere.temperatureF.coerceIn(-40.0, 140.0))
         val pressInHg = String.format(Locale.US, "%.2f", stationInHg)
         val humid = String.format(Locale.US, "%.2f", atmosphere.humidityPercent.coerceIn(0.0, 100.0))
-        val windSpd = String.format(Locale.US, "%.2f", atmosphere.windSpeedMph.coerceIn(0.0, 99.0))
-        val normWindDir = ((atmosphere.windDirectionDeg % 360.0) + 360.0) % 360.0
+        val effectiveWind = atmosphere.effectiveSingleWind()
+        val windSpd = String.format(Locale.US, "%.2f", effectiveWind.speedMph.coerceIn(0.0, 99.0))
+        val normWindDir = ((effectiveWind.directionDeg % 360.0) + 360.0) % 360.0
         val windDir = String.format(Locale.US, "%.2f", normWindDir)
         val normAz = ((atmosphere.shootingBearingDeg % 360.0) + 360.0) % 360.0
         val azimuth = String.format(Locale.US, "%.2f", normAz)

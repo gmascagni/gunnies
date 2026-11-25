@@ -147,7 +147,7 @@ object UnitFormatters {
         prefs: UserPreferences
     ): String {
         val sb = StringBuilder()
-        sb.appendLine("BC1800 Ballistics DOPE Card")
+        sb.appendLine("Gunnies Ballistics DOPE Card")
         sb.appendLine("Rig: $rigTitle")
         sb.appendLine("Ammo: $ammoTitle")
         sb.appendLine(

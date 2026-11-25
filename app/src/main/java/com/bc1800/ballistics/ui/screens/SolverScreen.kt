@@ -32,8 +32,10 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Warning
@@ -92,11 +94,14 @@ import com.bc1800.ballistics.model.AngularUnit
 import com.bc1800.ballistics.model.AppThemeMode
 import com.bc1800.ballistics.model.BallisticSolution
 import com.bc1800.ballistics.model.DistanceUnit
+import com.bc1800.ballistics.model.DsfPoint
 import com.bc1800.ballistics.model.FirearmCategory
 import com.bc1800.ballistics.ui.AppUiState
 import com.bc1800.ballistics.ui.BallisticsViewModel
 import com.bc1800.ballistics.ui.components.GunneryHudPanel
 import com.bc1800.ballistics.ui.components.HardwareThumbBadge
+import com.bc1800.ballistics.ui.components.InclinationAngleDialog
+import com.bc1800.ballistics.ui.components.LogShotDialog
 import com.bc1800.ballistics.ui.components.ReticleViewCard
 import com.bc1800.ballistics.ui.components.TurretDialGauge
 import com.bc1800.ballistics.ui.components.rememberChamferedHudShape
@@ -112,7 +117,8 @@ fun SolverScreen(
     viewModel: BallisticsViewModel,
     onRequestLocationWeather: () -> Unit,
     onOpenWeatherTab: () -> Unit,
-    onOpenRangefinderTab: () -> Unit
+    onOpenRangefinderTab: () -> Unit,
+    onOpenLogbook: () -> Unit
 ) {
     val prefs = uiState.preferences
     val active = uiState.activeProfile
@@ -129,7 +135,9 @@ fun SolverScreen(
 
     var showRigPickerSheet by remember { mutableStateOf(false) }
     var showRangeInputDialog by remember { mutableStateOf(false) }
-    var showMvTruingDialog by remember { mutableStateOf(false) }
+    var showCalibrationDialog by remember { mutableStateOf(false) }
+    var showInclinometerDialog by remember { mutableStateOf(false) }
+    var showLogShotDialog by remember { mutableStateOf(false) }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isExpanded = maxWidth >= 600.dp
@@ -162,7 +170,10 @@ fun SolverScreen(
                                 sol = sol,
                                 isShortRange = isShortRange,
                                 onSelectAngularUnit = { viewModel.setAngularUnit(it) },
-                                onOpenTruing = { showMvTruingDialog = true },
+                                onOpenInclinometer = { showInclinometerDialog = true },
+                                onOpenTruing = { showCalibrationDialog = true },
+                                onOpenLogShot = { showLogShotDialog = true },
+                                onOpenLogbook = onOpenLogbook,
                                 onOpenRangefinderTab = onOpenRangefinderTab
                             )
                         }
@@ -177,6 +188,7 @@ fun SolverScreen(
                             onRangeYardsChange = { viewModel.setRangeYards(it) },
                             onNudgeYards = { viewModel.nudgeRangeYards(it) },
                             onInclinationChange = { viewModel.setInclinationDeg(it) },
+                            onOpenInclinometer = { showInclinometerDialog = true },
                             onMoverChange = { viewModel.setMoverSpeedMph(it) },
                             onTapLoupe = { showRangeInputDialog = true }
                         )
@@ -233,7 +245,10 @@ fun SolverScreen(
                             sol = sol,
                             isShortRange = isShortRange,
                             onSelectAngularUnit = { viewModel.setAngularUnit(it) },
-                            onOpenTruing = { showMvTruingDialog = true },
+                            onOpenInclinometer = { showInclinometerDialog = true },
+                            onOpenTruing = { showCalibrationDialog = true },
+                            onOpenLogShot = { showLogShotDialog = true },
+                            onOpenLogbook = onOpenLogbook,
                             onOpenRangefinderTab = onOpenRangefinderTab
                         )
                     }
@@ -248,6 +263,7 @@ fun SolverScreen(
                         onRangeYardsChange = { viewModel.setRangeYards(it) },
                         onNudgeYards = { viewModel.nudgeRangeYards(it) },
                         onInclinationChange = { viewModel.setInclinationDeg(it) },
+                        onOpenInclinometer = { showInclinometerDialog = true },
                         onMoverChange = { viewModel.setMoverSpeedMph(it) },
                         onTapLoupe = { showRangeInputDialog = true }
                     )
@@ -277,7 +293,7 @@ fun SolverScreen(
         }
     }
 
-    // Rig Picker Bottom Sheet (Gun | Scope | Ammo)
+    // Rig Picker Bottom Sheet (Gun | Scope | Ammo | Can)
     if (showRigPickerSheet) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
@@ -308,15 +324,47 @@ fun SolverScreen(
         )
     }
 
-    // Guided Muzzle Velocity (MV) Truing Dialog
-    if (showMvTruingDialog && sol != null) {
-        MvTruingDialog(
+    // Two-Stage Ballistic Calibration / Truing Dialog (Supersonic MV + Transonic/Subsonic DSF)
+    if (showCalibrationDialog && sol != null) {
+        BallisticCalibrationDialog(
             uiState = uiState,
             currentSolution = sol,
-            onDismiss = { showMvTruingDialog = false },
+            onDismiss = { showCalibrationDialog = false },
             onApplyTruedMv = { mv ->
                 viewModel.applyTruedMuzzleVelocity(mv)
-                showMvTruingDialog = false
+                showCalibrationDialog = false
+            },
+            onApplyTruedDsf = { point ->
+                viewModel.applyTruedDsf(point)
+                showCalibrationDialog = false
+            },
+            onClearDsf = {
+                viewModel.clearActiveAmmoDsf()
+            }
+        )
+    }
+
+    // Phone Sensor Inclinometer + Manual Angle Override Dialog
+    if (showInclinometerDialog) {
+        InclinationAngleDialog(
+            initialAngleDeg = input.inclinationDeg,
+            onDismiss = { showInclinometerDialog = false },
+            onApplyAngleDeg = { deg ->
+                viewModel.setInclinationDeg(deg)
+                showInclinometerDialog = false
+            }
+        )
+    }
+
+    // One-Tap Cold Bore / Range Session Shot Logger
+    if (showLogShotDialog && sol != null) {
+        LogShotDialog(
+            uiState = uiState,
+            solution = sol,
+            onDismiss = { showLogShotDialog = false },
+            onSaveLog = { actE, actW, coldBore, notes ->
+                viewModel.logShot(actE, actW, coldBore, notes)
+                showLogShotDialog = false
             }
         )
     }
@@ -392,11 +440,15 @@ private fun FiringSolutionPanel(
     sol: BallisticSolution,
     isShortRange: Boolean,
     onSelectAngularUnit: (AngularUnit) -> Unit,
+    onOpenInclinometer: () -> Unit,
     onOpenTruing: () -> Unit,
+    onOpenLogShot: () -> Unit,
+    onOpenLogbook: () -> Unit,
     onOpenRangefinderTab: () -> Unit
 ) {
     val prefs = uiState.preferences
     val active = uiState.activeProfile
+    val inclDeg = uiState.solverInput.inclinationDeg
     val (elevNum, elevDir) = UnitFormatters.formatElevationHold(sol, prefs.angularUnit)
     val (windNum, windDir) = UnitFormatters.formatWindageHold(sol, prefs.angularUnit)
 
@@ -404,26 +456,60 @@ private fun FiringSolutionPanel(
         borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f),
         bracketColor = MaterialTheme.colorScheme.primary
     ) {
-            // Top bar: Solution @ Range + inline MOA|MRAD|IN toggle + True MV
+            // Top bar: Range + Inclination Angle Pill + MOA|MRAD|IN toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
                     Icon(
                         Icons.Default.GpsFixed,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(Modifier.width(5.dp))
                     Text(
                         text = UnitFormatters.formatDistance(sol.rangeYards, prefs.distanceUnit),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1
                     )
+                    // Compact Inclination Angle (°) Pill (taps open Inclinometer / Manual Angle)
+                    val hasAngle = abs(inclDeg) >= 0.5
+                    Surface(
+                        onClick = onOpenInclinometer,
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (hasAngle) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(
+                            1.dp,
+                            if (hasAngle) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outlineVariant
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.SwapVert,
+                                contentDescription = "Shot Angle",
+                                modifier = Modifier.size(12.dp),
+                                tint = if (hasAngle) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(2.dp))
+                            Text(
+                                text = if (hasAngle) String.format(Locale.US, "%+.0f°", inclDeg) else "0°",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (hasAngle) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -442,21 +528,71 @@ private fun FiringSolutionPanel(
                             )
                         }
                     }
+                }
+            }
 
+            // Quick Gunnery Action Strip: Calibrate (MV/DSF) + 1-Tap Log Shot
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = onOpenTruing,
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(5.dp))
+                        val calLabel = if (sol.mach <= BallisticEngine.TRANSONIC_MACH_GATE) "True DSF / MV" else "True MV / DSF"
+                        Text(calLabel, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Surface(
+                    onClick = onOpenLogShot,
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.65f)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.secondary)
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            text = "Log Shot",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+
+                if (uiState.sessionLogs.isNotEmpty()) {
                     Surface(
-                        onClick = onOpenTruing,
+                        onClick = onOpenLogbook,
                         shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(12.dp))
-                            Spacer(Modifier.width(3.dp))
-                            Text("True MV", style = MaterialTheme.typography.labelSmall)
-                        }
+                        Text(
+                            text = "${uiState.sessionLogs.size}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
                     }
                 }
             }
@@ -654,6 +790,7 @@ private fun RangeDialPanel(
     onRangeYardsChange: (Double) -> Unit,
     onNudgeYards: (Double) -> Unit,
     onInclinationChange: (Double) -> Unit,
+    onOpenInclinometer: () -> Unit,
     onMoverChange: (Double) -> Unit,
     onTapLoupe: () -> Unit
 ) {
@@ -751,16 +888,41 @@ private fun RangeDialPanel(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "${if (inclinationDeg > 0) "+" else ""}${inclinationDeg.roundToInt()}°",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
+                    Surface(
+                        onClick = onOpenInclinometer,
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.ScreenRotation,
+                                contentDescription = "Measure with Phone",
+                                modifier = Modifier.size(13.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "Measure",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
                     if (abs(inclinationDeg) >= 1.0) {
                         TextButton(
                             onClick = { onInclinationChange(0.0) },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
                         ) { Text("Flat") }
                     }
                 }
@@ -995,12 +1157,16 @@ private fun WeatherQuickBar(
                 modifier = Modifier.size(16.dp)
             )
             Spacer(Modifier.width(8.dp))
+            val windTag = if (atmo.isThreeZoneWind) {
+                "3-Zone ${UnitFormatters.formatWind(atmo.effectiveSingleWind().speedMph, prefs.windUnit)}"
+            } else {
+                "${UnitFormatters.formatWind(atmo.windSpeedMph, prefs.windUnit)} @ ${
+                    UnitFormatters.windClockHour(atmo.windDirectionDeg)
+                }:00"
+            }
             Text(
                 text = "${UnitFormatters.formatTemp(atmo.temperatureF, prefs.temperatureUnit)} • " +
-                    "${UnitFormatters.formatPressure(atmo.pressureInHg, prefs.pressureUnit)} • " +
-                    "${UnitFormatters.formatWind(atmo.windSpeedMph, prefs.windUnit)} @ ${
-                        UnitFormatters.windClockHour(atmo.windDirectionDeg)
-                    }:00",
+                    "${UnitFormatters.formatPressure(atmo.pressureInHg, prefs.pressureUnit)} • $windTag",
                 style = MaterialTheme.typography.titleSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1263,11 +1429,13 @@ private fun DirectRangeDialog(
 }
 
 @Composable
-private fun MvTruingDialog(
+private fun BallisticCalibrationDialog(
     uiState: AppUiState,
     currentSolution: BallisticSolution,
     onDismiss: () -> Unit,
-    onApplyTruedMv: (Double) -> Unit
+    onApplyTruedMv: (Double) -> Unit,
+    onApplyTruedDsf: (DsfPoint) -> Unit,
+    onClearDsf: () -> Unit
 ) {
     val prefs = uiState.preferences
     val unitLabel = if (prefs.angularUnit == AngularUnit.MRAD) "MRAD" else "MOA"
@@ -1275,6 +1443,9 @@ private fun MvTruingDialog(
 
     var distText by remember { mutableStateOf(currentSolution.rangeYards.roundToInt().toString()) }
     var observedText by remember { mutableStateOf(String.format(Locale.US, "%.2f", abs(predictedHold))) }
+    var stageTab by remember {
+        mutableIntStateOf(if (currentSolution.mach > BallisticEngine.TRANSONIC_MACH_GATE) 0 else 1)
+    }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
     val rangeYd = distText.toDoubleOrNull() ?: currentSolution.rangeYards
@@ -1283,9 +1454,30 @@ private fun MvTruingDialog(
         if (prefs.angularUnit == AngularUnit.MRAD) obsVal * 3.43774677 else obsVal
     } else null
 
-    val computedMv = remember(rangeYd, obsMoa, uiState.activeProfile, uiState.solverInput.atmosphere) {
-        if (obsMoa == null) null
+    val previewSol = remember(rangeYd, uiState.activeProfile, uiState.solverInput.atmosphere, uiState.solverInput.inclinationDeg) {
+        BallisticEngine.solve(
+            profile = uiState.activeProfile,
+            atmosphere = uiState.solverInput.atmosphere,
+            rangeYards = rangeYd.coerceAtLeast(10.0),
+            inclinationDeg = uiState.solverInput.inclinationDeg
+        )
+    }
+    val isSupersonicAtTarget = previewSol.mach > BallisticEngine.TRANSONIC_MACH_GATE
+
+    val computedMv = remember(stageTab, rangeYd, obsMoa, uiState.activeProfile, uiState.solverInput.atmosphere) {
+        if (stageTab != 0 || obsMoa == null) null
         else BallisticEngine.trueMuzzleVelocity(
+            profile = uiState.activeProfile,
+            atmosphere = uiState.solverInput.atmosphere,
+            rangeYards = rangeYd,
+            observedElevationMoa = obsMoa,
+            inclinationDeg = uiState.solverInput.inclinationDeg
+        )
+    }
+
+    val computedDsf = remember(stageTab, rangeYd, obsMoa, uiState.activeProfile, uiState.solverInput.atmosphere) {
+        if (stageTab != 1 || obsMoa == null) null
+        else BallisticEngine.trueDropScaleFactor(
             profile = uiState.activeProfile,
             atmosphere = uiState.solverInput.atmosphere,
             rangeYards = rangeYd,
@@ -1296,14 +1488,32 @@ private fun MvTruingDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Muzzle Velocity Truing") },
+        title = { Text("Ballistic Calibration / Truing") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = stageTab == 0,
+                        onClick = { stageTab = 0; errorMsg = null },
+                        shape = SegmentedButtonDefaults.itemShape(0, 2)
+                    ) { Text("1: MV (>M1.2)", maxLines = 1) }
+                    SegmentedButton(
+                        selected = stageTab == 1,
+                        onClick = { stageTab = 1; errorMsg = null },
+                        shape = SegmentedButtonDefaults.itemShape(1, 2)
+                    ) { Text("2: DSF (≤M1.2)", maxLines = 1) }
+                }
+
                 Text(
-                    text = "Enter your actual impact elevation hold at distance to calibrate ${uiState.activeAmmo.name}.",
+                    text = if (stageTab == 0) {
+                        "Stage 1 (Supersonic): Calibrates Muzzle Velocity for ${uiState.activeAmmo.name}."
+                    } else {
+                        "Stage 2 (Transonic / Subsonic): Locks MV and calibrates Drop Scale Factor (DSF) at Mach ≤ 1.2."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
                 OutlinedTextField(
                     value = distText,
                     onValueChange = { distText = it; errorMsg = null },
@@ -1326,23 +1536,72 @@ private fun MvTruingDialog(
                     shape = MaterialTheme.shapes.small,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(
-                            text = "Current MV: ${uiState.activeAmmo.muzzleVelocityFps.roundToInt()} fps",
+                            text = String.format(
+                                Locale.US,
+                                "Target Mach: M%.2f (%s) • Current MV: %d fps",
+                                previewSol.mach,
+                                if (isSupersonicAtTarget) "Supersonic" else "Sub/Transonic",
+                                uiState.activeAmmo.muzzleVelocityFps.roundToInt()
+                            ),
                             style = MaterialTheme.typography.bodySmall
                         )
+                        if (stageTab == 0) {
+                            if (!isSupersonicAtTarget) {
+                                Text(
+                                    text = "Tip: Target is ≤ Mach 1.2 — Stage 2 (DSF) is recommended.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                            }
+                            Text(
+                                text = if (computedMv != null) {
+                                    "Trued MV: ${computedMv.roundToInt()} fps (${if (computedMv >= uiState.activeAmmo.muzzleVelocityFps) "+" else ""}${
+                                        (computedMv - uiState.activeAmmo.muzzleVelocityFps).roundToInt()
+                                    } fps)"
+                                } else {
+                                    "Trued MV: Enter a valid hold beyond zero range"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (computedMv != null) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                        } else {
+                            Text(
+                                text = when {
+                                    isSupersonicAtTarget -> "Move to a transonic/subsonic range (Mach ≤ 1.2) for DSF calibration."
+                                    computedDsf != null -> String.format(
+                                        Locale.US,
+                                        "Trued DSF: %.3f @ Mach %.2f (MV Locked)",
+                                        computedDsf.dropScaleFactor,
+                                        computedDsf.mach
+                                    )
+                                    else -> "Trued DSF: Enter a valid hold beyond zero range"
+                                },
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (computedDsf != null) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                if (uiState.activeAmmo.dsfTable.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = if (computedMv != null) {
-                                "Trued MV: ${computedMv.roundToInt()} fps (${if (computedMv >= uiState.activeAmmo.muzzleVelocityFps) "+" else ""}${
-                                    (computedMv - uiState.activeAmmo.muzzleVelocityFps).roundToInt()
-                                } fps)"
-                            } else {
-                                "Trued MV: Enter a valid hold beyond zero range"
+                            text = "Saved DSF: " + uiState.activeAmmo.dsfTable.joinToString(", ") {
+                                String.format(Locale.US, "M%.2f→%.3f", it.mach, it.dropScaleFactor)
                             },
-                            style = MaterialTheme.typography.titleSmall,
-                            color = if (computedMv != null) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
-                            fontWeight = FontWeight.Bold
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
                         )
+                        TextButton(onClick = onClearDsf) { Text("Reset DSF") }
                     }
                 }
 
@@ -1350,13 +1609,23 @@ private fun MvTruingDialog(
             }
         },
         confirmButton = {
-            Button(
-                enabled = computedMv != null,
-                onClick = {
-                    if (computedMv != null) onApplyTruedMv(computedMv)
-                    else errorMsg = "Unable to solve trued MV for these inputs."
-                }
-            ) { Text("Apply Trued MV") }
+            if (stageTab == 0) {
+                Button(
+                    enabled = computedMv != null,
+                    onClick = {
+                        if (computedMv != null) onApplyTruedMv(computedMv)
+                        else errorMsg = "Unable to solve trued MV for these inputs."
+                    }
+                ) { Text("Apply Trued MV") }
+            } else {
+                Button(
+                    enabled = computedDsf != null,
+                    onClick = {
+                        if (computedDsf != null) onApplyTruedDsf(computedDsf)
+                        else errorMsg = "Unable to solve DSF for these inputs."
+                    }
+                ) { Text("Apply DSF") }
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )

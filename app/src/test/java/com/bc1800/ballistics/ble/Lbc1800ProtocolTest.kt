@@ -1,8 +1,13 @@
 package com.bc1800.ballistics.ble
 
 import com.bc1800.ballistics.model.Atmosphere
+import com.bc1800.ballistics.model.BcBand
 import com.bc1800.ballistics.model.DefaultProfiles
+import com.bc1800.ballistics.model.DsfPoint
 import com.bc1800.ballistics.model.TwistDirection
+import com.bc1800.ballistics.model.WindMode
+import com.bc1800.ballistics.model.WindProfile
+import com.bc1800.ballistics.model.WindZone
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -136,5 +141,41 @@ class Lbc1800ProtocolTest {
         // 0°F -> 2640 fps, 100°F -> 2740 fps
         assertTrue(tableCmd.contains(",00000,02640,"))
         assertTrue(tableCmd.contains(",00100,02740,"))
+    }
+
+    @Test
+    fun ballisticProfileCommandUsesPrimaryMultiBcDsfAndRangeWeightedThreeZoneWind() {
+        val profile = DefaultProfiles.starterProfiles.first().copy(
+            ballisticCoefficient = 0.450,
+            bcBands = listOf(
+                BcBand(2500.0, 0.525),
+                BcBand(1800.0, 0.490),
+                BcBand(0.0, 0.440)
+            ),
+            dsfTable = listOf(
+                DsfPoint(0.95, 1.045)
+            )
+        )
+        val atmo = Atmosphere(
+            windSpeedMph = 5.0,
+            windDirectionDeg = 90.0,
+            windProfile = WindProfile(
+                mode = WindMode.THREE_ZONE,
+                near = WindZone(9.0, 90.0),
+                mid = WindZone(9.0, 90.0),
+                far = WindZone(0.0, 90.0)
+            )
+        )
+        val cmd = Lbc1800Protocol.buildBallisticProfileCommand(profile, atmo)
+        assertTrue(Lbc1800Protocol.verifyAsciiChecksum(cmd))
+        val fields = cmd.trimEnd('\r').split(',')
+        // Field 1 is primary (highest-velocity) BC = 0.525
+        assertEquals("0.525", fields[1])
+        // Fields 10..11 are first DSF pair: 0.950, 1.045
+        assertEquals("0.950", fields[10])
+        assertEquals("1.045", fields[11])
+        // Field 30 is range-weighted wind speed: (5/9*9 + 3/9*9 + 1/9*0) = 8.00 mph
+        assertEquals("8.00", fields[30])
+        assertEquals("90.00", fields[31])
     }
 }

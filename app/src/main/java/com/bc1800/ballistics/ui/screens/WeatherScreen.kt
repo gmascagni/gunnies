@@ -72,7 +72,10 @@ import com.bc1800.ballistics.model.Atmosphere
 import com.bc1800.ballistics.model.PressureUnit
 import com.bc1800.ballistics.model.TemperatureUnit
 import com.bc1800.ballistics.model.UserPreferences
+import com.bc1800.ballistics.model.WindMode
+import com.bc1800.ballistics.model.WindProfile
 import com.bc1800.ballistics.model.WindUnit
+import com.bc1800.ballistics.model.WindZone
 import com.bc1800.ballistics.ui.AppUiState
 import com.bc1800.ballistics.ui.BallisticsViewModel
 import java.util.Locale
@@ -443,15 +446,75 @@ private fun LocalWindCard(
             // GPS Auto vs Manual Wind Override mode switch
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 SegmentedButton(
-                    selected = !atmo.manualWindOverride,
+                    selected = !atmo.manualWindOverride && !atmo.isThreeZoneWind,
                     onClick = { viewModel.setManualWindOverride(false) },
                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
                 ) { Text("GPS Auto Wind", maxLines = 1) }
                 SegmentedButton(
-                    selected = atmo.manualWindOverride,
+                    selected = atmo.manualWindOverride || atmo.isThreeZoneWind,
                     onClick = { viewModel.setManualWindOverride(true) },
                     shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
                 ) { Text("Manual Override", maxLines = 1) }
+            }
+
+            // Single Wind vs 3-Zone Wind (Near 0-33% / Mid 33-66% / Far 66-100%)
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = !atmo.isThreeZoneWind,
+                    onClick = { viewModel.setWindMode(WindMode.SINGLE) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                ) { Text("Single Wind", maxLines = 1) }
+                SegmentedButton(
+                    selected = atmo.isThreeZoneWind,
+                    onClick = { viewModel.setWindMode(WindMode.THREE_ZONE) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                ) { Text("3-Zone (Near/Mid/Far)", maxLines = 1) }
+            }
+
+            if (atmo.isThreeZoneWind) {
+                val wp = atmo.windProfile ?: WindProfile(
+                    mode = WindMode.THREE_ZONE,
+                    near = WindZone(atmo.windSpeedMph, atmo.windDirectionDeg),
+                    mid = WindZone(atmo.windSpeedMph, atmo.windDirectionDeg),
+                    far = WindZone(atmo.windSpeedMph, atmo.windDirectionDeg)
+                )
+                val avg = wp.rangeWeightedAverage()
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "3-ZONE BALLISTIC WIND ACTIVE",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "LBC1800 Range-Weighted Avg: ${UnitFormatters.formatWind(avg.speedMph, windUnit)} @ ${
+                                UnitFormatters.windClockHour(avg.directionDeg)
+                            }:00 (${avg.directionDeg.roundToInt()}°)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+
+                listOf(
+                    Triple(0, "NEAR (0–33%)", wp.near),
+                    Triple(1, "MID (33–66%)", wp.mid),
+                    Triple(2, "FAR (66–100%)", wp.far)
+                ).forEach { (idx, title, zone) ->
+                    WindZoneEditorRow(
+                        title = title,
+                        zone = zone,
+                        windUnit = windUnit,
+                        onSpeedMphChange = { spd -> viewModel.updateWindZone(idx, speedMph = spd) },
+                        onDirectionDegChange = { deg -> viewModel.updateWindZone(idx, directionDeg = deg) }
+                    )
+                }
             }
 
             Row(
@@ -638,6 +701,85 @@ private fun LocalWindCard(
                     label = { Text("Gust (${windUnit.shortLabel})") },
                     placeholder = { Text("0") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WindZoneEditorRow(
+    title: String,
+    zone: WindZone,
+    windUnit: WindUnit,
+    onSpeedMphChange: (Double) -> Unit,
+    onDirectionDegChange: (Double) -> Unit
+) {
+    var speedText by remember(windUnit) {
+        mutableStateOf(String.format(Locale.US, "%.1f", UnitFormatters.windValue(zone.speedMph, windUnit)))
+    }
+    LaunchedEffect(zone.speedMph, windUnit) {
+        val disp = UnitFormatters.windValue(zone.speedMph, windUnit)
+        val parsed = speedText.toDoubleOrNull()
+        if (parsed == null || abs(parsed - disp) > 0.25) {
+            speedText = String.format(Locale.US, "%.1f", disp)
+        }
+    }
+
+    var dirText by remember { mutableStateOf(zone.directionDeg.roundToInt().toString()) }
+    LaunchedEffect(zone.directionDeg) {
+        val parsed = dirText.toDoubleOrNull()
+        if (parsed == null || abs(parsed - zone.directionDeg) > 0.7) {
+            dirText = zone.directionDeg.roundToInt().toString()
+        }
+    }
+
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    text = "${UnitFormatters.formatWind(zone.speedMph, windUnit)} @ ${UnitFormatters.windClockHour(zone.directionDeg)}:00",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = speedText,
+                    onValueChange = { raw ->
+                        speedText = raw
+                        raw.toDoubleOrNull()?.let { v ->
+                            onSpeedMphChange(UnitFormatters.windToMph(v, windUnit).coerceIn(0.0, 50.0))
+                        }
+                    },
+                    label = { Text("Speed (${windUnit.shortLabel})") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = dirText,
+                    onValueChange = { raw ->
+                        dirText = raw
+                        raw.toDoubleOrNull()?.let { deg -> onDirectionDegChange(deg) }
+                    },
+                    label = { Text("Clock (° 0–359)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )

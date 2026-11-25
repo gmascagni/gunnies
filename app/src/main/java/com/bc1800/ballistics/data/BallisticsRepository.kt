@@ -9,14 +9,19 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.bc1800.ballistics.model.AmmoLoad
 import com.bc1800.ballistics.model.AngularUnit
+import com.bc1800.ballistics.model.ArsenalBackup
+import com.bc1800.ballistics.model.BackupImportMode
 import com.bc1800.ballistics.model.DefaultProfiles
 import com.bc1800.ballistics.model.FirearmSetup
 import com.bc1800.ballistics.model.ScopeSetup
+import com.bc1800.ballistics.model.SessionLogEntry
+import com.bc1800.ballistics.model.StageCard
 import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.UserPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -46,11 +51,13 @@ class BallisticsRepository(private val context: Context) {
         val SCOPES_JSON = stringPreferencesKey("scopes_json")
         val AMMO_JSON = stringPreferencesKey("ammo_json")
         val SUPPRESSORS_JSON = stringPreferencesKey("suppressors_json")
+        val STAGE_CARDS_JSON = stringPreferencesKey("stage_cards_json")
+        val SESSION_LOGS_JSON = stringPreferencesKey("session_logs_json")
         val ARSENAL_SEED_VERSION = stringPreferencesKey("arsenal_seed_version")
     }
 
     companion object {
-        private const val CURRENT_ARSENAL_VERSION = "v9_eotech_512_g33"
+        private const val CURRENT_ARSENAL_VERSION = "v10_tier1_stage_logbook"
     }
 
     private val safeData: Flow<Preferences> = context.ballisticsDataStore.data
@@ -83,6 +90,19 @@ class BallisticsRepository(private val context: Context) {
         .map { it[Keys.SUPPRESSORS_JSON] }
         .distinctUntilChanged()
         .map { raw -> decodeListAllowingEmptyOrDefault(raw, DefaultProfiles.starterSuppressors) }
+
+    val stageCardsFlow: Flow<List<StageCard>> = safeData
+        .map { it[Keys.STAGE_CARDS_JSON] }
+        .distinctUntilChanged()
+        .map { raw -> decodeListAllowingEmptyOrDefault(raw, DefaultProfiles.starterStageCards) }
+
+    val sessionLogsFlow: Flow<List<SessionLogEntry>> = safeData
+        .map { it[Keys.SESSION_LOGS_JSON] }
+        .distinctUntilChanged()
+        .map { raw ->
+            decodeListAllowingEmptyOrDefault(raw, emptyList<SessionLogEntry>())
+                .sortedByDescending { it.timestampMs }
+        }
 
     private inline fun <reified T> decodeListOrDefault(raw: String?, fallback: List<T>): List<T> {
         if (raw.isNullOrBlank()) return fallback
@@ -145,6 +165,12 @@ class BallisticsRepository(private val context: Context) {
             prefs[Keys.SCOPES_JSON] = json.encodeToString(mergedScopes)
             prefs[Keys.AMMO_JSON] = json.encodeToString(mergedAmmo)
             prefs[Keys.SUPPRESSORS_JSON] = json.encodeToString(mergedSuppressors)
+            if (prefs[Keys.STAGE_CARDS_JSON] == null) {
+                prefs[Keys.STAGE_CARDS_JSON] = json.encodeToString(DefaultProfiles.starterStageCards)
+            }
+            if (prefs[Keys.SESSION_LOGS_JSON] == null) {
+                prefs[Keys.SESSION_LOGS_JSON] = json.encodeToString(emptyList<SessionLogEntry>())
+            }
             prefs[Keys.ARSENAL_SEED_VERSION] = CURRENT_ARSENAL_VERSION
 
             val currentPrefs = prefs[Keys.USER_PREFERENCES_JSON]?.let {
@@ -242,6 +268,107 @@ class BallisticsRepository(private val context: Context) {
             }
         }
         return deleted
+    }
+
+    // --- Stage Cards ---
+
+    suspend fun saveStageCard(card: StageCard) {
+        context.ballisticsDataStore.edit { prefs ->
+            val currentList = decodeListAllowingEmptyOrDefault(prefs[Keys.STAGE_CARDS_JSON], DefaultProfiles.starterStageCards)
+            val stamped = card.copy(updatedAtMs = System.currentTimeMillis())
+            val updated = if (currentList.any { it.id == stamped.id }) {
+                currentList.map { if (it.id == stamped.id) stamped else it }
+            } else {
+                listOf(stamped) + currentList
+            }
+            prefs[Keys.STAGE_CARDS_JSON] = json.encodeToString(updated)
+        }
+    }
+
+    suspend fun deleteStageCard(stageId: String): Boolean {
+        var deleted = false
+        context.ballisticsDataStore.edit { prefs ->
+            val currentList = decodeListAllowingEmptyOrDefault(prefs[Keys.STAGE_CARDS_JSON], DefaultProfiles.starterStageCards)
+            val updated = currentList.filterNot { it.id == stageId }
+            if (updated.size < currentList.size) {
+                deleted = true
+                prefs[Keys.STAGE_CARDS_JSON] = json.encodeToString(updated)
+            }
+        }
+        return deleted
+    }
+
+    // --- Session / Cold Bore Dope Logs ---
+
+    suspend fun addSessionLog(entry: SessionLogEntry) {
+        context.ballisticsDataStore.edit { prefs ->
+            val currentList = decodeListAllowingEmptyOrDefault(prefs[Keys.SESSION_LOGS_JSON], emptyList<SessionLogEntry>())
+            val updated = (listOf(entry) + currentList).take(500)
+            prefs[Keys.SESSION_LOGS_JSON] = json.encodeToString(updated)
+        }
+    }
+
+    suspend fun deleteSessionLog(entryId: String): Boolean {
+        var deleted = false
+        context.ballisticsDataStore.edit { prefs ->
+            val currentList = decodeListAllowingEmptyOrDefault(prefs[Keys.SESSION_LOGS_JSON], emptyList<SessionLogEntry>())
+            val updated = currentList.filterNot { it.id == entryId }
+            if (updated.size < currentList.size) {
+                deleted = true
+                prefs[Keys.SESSION_LOGS_JSON] = json.encodeToString(updated)
+            }
+        }
+        return deleted
+    }
+
+    // --- Full Arsenal JSON Backup & Restore ---
+
+    suspend fun exportBackupJson(): String {
+        val prefsSnapshot = safeData.first()
+        val backup = snapshotToBackup(prefsSnapshot)
+        return ArsenalBackupCodec.encode(backup)
+    }
+
+    suspend fun importBackupJson(rawJson: String, mode: BackupImportMode): Result<BackupImportSummary> {
+        val incoming = ArsenalBackupCodec.decode(rawJson).getOrElse { return Result.failure(it) }
+        var summary: BackupImportSummary? = null
+        context.ballisticsDataStore.edit { prefs ->
+            val existing = snapshotToBackup(prefs)
+            val (merged, resultSummary) = ArsenalBackupCodec.applyImport(existing, incoming, mode)
+            prefs[Keys.FIREARMS_JSON] = json.encodeToString(merged.firearms)
+            prefs[Keys.SCOPES_JSON] = json.encodeToString(merged.scopes)
+            prefs[Keys.AMMO_JSON] = json.encodeToString(merged.ammoLoads)
+            prefs[Keys.SUPPRESSORS_JSON] = json.encodeToString(merged.suppressors)
+            prefs[Keys.STAGE_CARDS_JSON] = json.encodeToString(merged.stageCards)
+            prefs[Keys.SESSION_LOGS_JSON] = json.encodeToString(merged.sessionLogs)
+            prefs[Keys.USER_PREFERENCES_JSON] = json.encodeToString(merged.preferences)
+            summary = resultSummary
+        }
+        return Result.success(summary!!)
+    }
+
+    private fun snapshotToBackup(prefs: Preferences): ArsenalBackup {
+        val guns = decodeListOrDefault(prefs[Keys.FIREARMS_JSON], DefaultProfiles.starterFirearms)
+        val scopes = decodeListOrDefault(prefs[Keys.SCOPES_JSON], DefaultProfiles.starterScopes)
+        val ammo = decodeListOrDefault(prefs[Keys.AMMO_JSON], DefaultProfiles.starterAmmo)
+        val supps = decodeListAllowingEmptyOrDefault(prefs[Keys.SUPPRESSORS_JSON], DefaultProfiles.starterSuppressors)
+        val stages = decodeListAllowingEmptyOrDefault(prefs[Keys.STAGE_CARDS_JSON], DefaultProfiles.starterStageCards)
+        val logs = decodeListAllowingEmptyOrDefault(prefs[Keys.SESSION_LOGS_JSON], emptyList<SessionLogEntry>())
+        val userPrefs = prefs[Keys.USER_PREFERENCES_JSON]?.let {
+            runCatching { json.decodeFromString<UserPreferences>(it) }.getOrNull()
+        } ?: UserPreferences()
+
+        return ArsenalBackup(
+            schemaVersion = ArsenalBackupCodec.CURRENT_SCHEMA_VERSION,
+            exportedAtMs = System.currentTimeMillis(),
+            firearms = guns,
+            scopes = scopes,
+            ammoLoads = ammo,
+            suppressors = supps,
+            stageCards = stages,
+            sessionLogs = logs,
+            preferences = userPrefs
+        )
     }
 
     private suspend inline fun <reified T> upsertItem(
