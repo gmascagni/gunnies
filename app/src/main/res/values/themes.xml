@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.BC1800Ballistics" parent="android:Theme.Material.NoActionBar" />
+    <style name="Theme.GunniesBallistics" parent="android:Theme.Material.NoActionBar" />
 </resources>

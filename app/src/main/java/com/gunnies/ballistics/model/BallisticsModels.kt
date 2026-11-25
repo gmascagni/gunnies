@@ -1,0 +1,794 @@
+package com.gunnies.ballistics.model
+
+import kotlinx.serialization.Serializable
+import java.util.UUID
+
+@Serializable
+enum class DragModel(val label: String) {
+    G1("G1"),
+    G7("G7")
+}
+
+@Serializable
+enum class WeaponMode(val label: String) {
+    RIFLE("Rifle"),
+    BOW("Bow / Crossbow")
+}
+
+@Serializable
+enum class FirearmCategory(val label: String) {
+    RIFLE("Rifle"),
+    HANDGUN("Handgun"),
+    BOW_OTHER("Bow / Other")
+}
+
+@Serializable
+enum class ScopeCategory(val label: String) {
+    RIFLE_SCOPE("Rifle Scope"),
+    RED_DOT_IRON("Red Dot / Iron"),
+    HANDGUN_OPTIC("Handgun Optic")
+}
+
+@Serializable
+enum class ReticleType(
+    val label: String,
+    val isMradBased: Boolean,
+    val minZoom: Float,
+    val maxZoom: Float,
+    val isFfp: Boolean
+) {
+    ARKEN_VPR_MIL("Arken VPR MIL", true, 4f, 16f, true),
+    PA_ARC2_MOA("Primary Arms ARC-2 MOA", false, 4f, 14f, true),
+    PA_ACSS_RGRID("Primary Arms ACSS / R-Grid", true, 4f, 14f, true),
+    RED_DOT_CIRCLE_65("Red Dot (2/65 MOA)", false, 1f, 4f, false),
+    EOTECH_HWS_68("EOTech 68 MOA / 1 MOA", false, 1f, 3f, false),
+    HANDGUN_THREE_DOT("Handgun 3-Dot Irons", false, 1f, 2f, false),
+    SIMPLE_DUPLEX("Classic Duplex", false, 3f, 9f, false)
+}
+
+@Serializable
+enum class AmmoCategory(val label: String) {
+    RIMFIRE("Rimfire (.22)"),
+    RIFLE("Rifle"),
+    HANDGUN("Handgun")
+}
+
+@Serializable
+enum class SuppressorCategory(val label: String) {
+    RIMFIRE("Rimfire (.22)"),
+    RIFLE("Rifle"),
+    PISTOL("Pistol / Subgun"),
+    MULTI_CAL("Multi-Caliber")
+}
+
+@Serializable
+enum class TwistDirection(val label: String) {
+    RIGHT("Right"),
+    LEFT("Left"),
+    NONE("None")
+}
+
+@Serializable
+enum class ClickUnit(val label: String, val clicksPerMoa: Double?, val clicksPerMrad: Double?) {
+    QUARTER_MOA("1/4 MOA", 4.0, null),
+    EIGHTH_MOA("1/8 MOA", 8.0, null),
+    HALF_MOA("1/2 MOA", 2.0, null),
+    TENTH_MRAD("0.1 MRAD", null, 10.0),
+    TWENTIETH_MRAD("0.05 MRAD", null, 20.0);
+
+    val isMrad: Boolean get() = clicksPerMrad != null
+
+    fun toClicks(moa: Double, mrad: Double): Double {
+        return when {
+            clicksPerMoa != null -> moa * clicksPerMoa
+            clicksPerMrad != null -> mrad * clicksPerMrad
+            else -> 0.0
+        }
+    }
+}
+
+/**
+ * Independent Firearm setup (Rifle or Handgun: barrel length, twist, caliber class, favorite flag).
+ */
+@Serializable
+data class FirearmSetup(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val category: FirearmCategory = FirearmCategory.RIFLE,
+    val caliberHint: String = ".22 LR",
+    val barrelLengthInches: Double = 18.0,
+    val barrelTwistInches: Double = 16.0,
+    val twistDirection: TwistDirection = TwistDirection.RIGHT,
+    val isFavorite: Boolean = false,
+    val notes: String = ""
+)
+
+/**
+ * Independent Optic / Scope setup (turret clicks, reticle, sight height, zero range,
+ * zero POI offset, tall-target sight scale factor, favorite flag).
+ */
+@Serializable
+data class ScopeSetup(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val scopeModel: String = "",
+    val category: ScopeCategory = ScopeCategory.RIFLE_SCOPE,
+    val reticleType: ReticleType = ReticleType.ARKEN_VPR_MIL,
+    val weaponMode: WeaponMode = WeaponMode.RIFLE,
+    val sightHeightInches: Double = 1.85,
+    val zeroRangeYards: Double = 100.0,
+    val zeroOffsetVerticalInches: Double = 0.0,
+    val zeroOffsetHorizontalInches: Double = 0.0,
+    val elevationSsf: Double = 1.0,
+    val windageSsf: Double = 1.0,
+    val clickUnit: ClickUnit = ClickUnit.QUARTER_MOA,
+    val zeroTempF: Double = 59.0,
+    val zeroPressureInHg: Double = 29.92,
+    val zeroHumidityPercent: Double = 50.0,
+    val isFavorite: Boolean = false,
+    val notes: String = ""
+)
+
+/**
+ * Velocity-banded Ballistic Coefficient entry (Sierra / Strelok multi-BC convention).
+ * Applies when instantaneous projectile velocity >= [minVelocityFps].
+ */
+@Serializable
+data class BcBand(
+    val minVelocityFps: Double,
+    val bc: Double
+)
+
+/**
+ * Transonic / Subsonic Drop Scale Factor (DSF) calibration node mapping Mach number
+ * to a vertical drop multiplier (1.0 = unscaled).
+ */
+@Serializable
+data class DsfPoint(
+    val mach: Double,
+    val dropScaleFactor: Double = 1.0
+)
+
+/**
+ * Independent Ammunition / Bullet load (category, caliber, drag model, BC, optional stepped
+ * multi-BC velocity bands, transonic/subsonic DSF table, MV, weight, diameter, bullet length,
+ * powder temperature sensitivity, favorite flag).
+ */
+@Serializable
+data class AmmoLoad(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val caliber: String,
+    val category: AmmoCategory = AmmoCategory.RIFLE,
+    val dragModel: DragModel = DragModel.G1,
+    val ballisticCoefficient: Double = 0.250,
+    val muzzleVelocityFps: Double = 2700.0,
+    val bulletWeightGrains: Double = 55.0,
+    val bulletDiameterInches: Double = 0.224,
+    val bulletLengthInches: Double? = null,
+    val mvTempSensitivityFpsPerF: Double = 0.0,
+    val chronoTempF: Double = 60.0,
+    val isFavorite: Boolean = false,
+    val notes: String = "",
+    val bcBands: List<BcBand> = emptyList(),
+    val dsfTable: List<DsfPoint> = emptyList()
+) {
+    /** Primary (highest-velocity) BC used for single-BC summaries and LBC1800 :BP sync. */
+    fun primaryBc(): Double {
+        val valid = bcBands.filter { it.bc in 0.01..2.0 }
+        return valid.maxByOrNull { it.minVelocityFps }?.bc ?: ballisticCoefficient
+    }
+}
+
+/**
+ * Independent Suppressor setup (sound moderator: caliber rating, mount, physical specs,
+ * velocity shift, and zero POI shift).
+ */
+@Serializable
+data class SuppressorSetup(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val manufacturer: String = "",
+    val category: SuppressorCategory = SuppressorCategory.RIMFIRE,
+    val caliberRating: String = ".22 LR",
+    val mountType: String = "1/2x28 Direct Thread",
+    val lengthInches: Double = 5.0,
+    val weightOz: Double = 2.5,
+    val diameterInches: Double = 1.0,
+    /** Positive = velocity boost (fps) with suppressor attached. */
+    val mvShiftFps: Double = 0.0,
+    /** Positive = impacts high at zero range (inches). */
+    val poiShiftVerticalInches: Double = 0.0,
+    /** Positive = impacts right at zero range (inches). */
+    val poiShiftHorizontalInches: Double = 0.0,
+    val isFavorite: Boolean = false,
+    val notes: String = ""
+)
+
+/**
+ * Combined active ballistic setup fed into BallisticEngine & Lbc1800Protocol,
+ * assembled dynamically from active Firearm + active Scope + active Ammo + optional Suppressor.
+ */
+@Serializable
+data class RifleProfile(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val caliber: String,
+    val firearmName: String = "",
+    val scopeName: String = "",
+    val suppressorName: String = "",
+    val weaponMode: WeaponMode = WeaponMode.RIFLE,
+    val dragModel: DragModel = DragModel.G1,
+    val ballisticCoefficient: Double = 0.462,
+    val muzzleVelocityFps: Double = 2650.0,
+    val bulletWeightGrains: Double = 168.0,
+    val bulletDiameterInches: Double = 0.308,
+    val bulletLengthInches: Double? = null,
+    val mvTempSensitivityFpsPerF: Double = 0.0,
+    val chronoTempF: Double = 60.0,
+    val sightHeightInches: Double = 1.75,
+    val zeroRangeYards: Double = 100.0,
+    val zeroOffsetVerticalInches: Double = 0.0,
+    val zeroOffsetHorizontalInches: Double = 0.0,
+    val elevationSsf: Double = 1.0,
+    val windageSsf: Double = 1.0,
+    val clickUnit: ClickUnit = ClickUnit.QUARTER_MOA,
+    val barrelTwistInches: Double = 10.0,
+    val twistDirection: TwistDirection = TwistDirection.RIGHT,
+    val zeroTempF: Double = 59.0,
+    val zeroPressureInHg: Double = 29.92,
+    val zeroHumidityPercent: Double = 50.0,
+    val notes: String = "",
+    val bcBands: List<BcBand> = emptyList(),
+    val dsfTable: List<DsfPoint> = emptyList()
+) {
+    /** Primary (highest-velocity) BC for LBC1800 :BP serialization and single-BC fallback. */
+    fun primaryBc(): Double {
+        val valid = bcBands.filter { it.bc in 0.01..2.0 }
+        return valid.maxByOrNull { it.minVelocityFps }?.bc ?: ballisticCoefficient
+    }
+
+    companion object {
+        fun combine(
+            firearm: FirearmSetup,
+            scope: ScopeSetup,
+            ammo: AmmoLoad,
+            suppressor: SuppressorSetup? = null
+        ): RifleProfile = RifleProfile(
+            id = "${firearm.id}__${scope.id}__${ammo.id}__${suppressor?.id ?: "none"}",
+            name = ammo.name,
+            caliber = ammo.caliber,
+            firearmName = firearm.name,
+            scopeName = scope.name,
+            suppressorName = suppressor?.name ?: "",
+            weaponMode = if (firearm.category == FirearmCategory.BOW_OTHER) WeaponMode.BOW else scope.weaponMode,
+            dragModel = ammo.dragModel,
+            ballisticCoefficient = ammo.primaryBc(),
+            bcBands = ammo.bcBands,
+            dsfTable = ammo.dsfTable,
+            muzzleVelocityFps = (ammo.muzzleVelocityFps + (suppressor?.mvShiftFps ?: 0.0)).coerceAtLeast(100.0),
+            bulletWeightGrains = ammo.bulletWeightGrains,
+            bulletDiameterInches = ammo.bulletDiameterInches,
+            bulletLengthInches = ammo.bulletLengthInches,
+            mvTempSensitivityFpsPerF = ammo.mvTempSensitivityFpsPerF,
+            chronoTempF = ammo.chronoTempF,
+            sightHeightInches = scope.sightHeightInches,
+            zeroRangeYards = scope.zeroRangeYards,
+            zeroOffsetVerticalInches = scope.zeroOffsetVerticalInches + (suppressor?.poiShiftVerticalInches ?: 0.0),
+            zeroOffsetHorizontalInches = scope.zeroOffsetHorizontalInches + (suppressor?.poiShiftHorizontalInches ?: 0.0),
+            elevationSsf = scope.elevationSsf,
+            windageSsf = scope.windageSsf,
+            clickUnit = scope.clickUnit,
+            barrelTwistInches = firearm.barrelTwistInches,
+            twistDirection = firearm.twistDirection,
+            zeroTempF = scope.zeroTempF,
+            zeroPressureInHg = scope.zeroPressureInHg,
+            zeroHumidityPercent = scope.zeroHumidityPercent,
+            notes = listOf(firearm.name, scope.name, suppressor?.name ?: "", ammo.notes)
+                .filter { it.isNotBlank() }
+                .joinToString(" • ")
+        )
+    }
+}
+
+@Serializable
+enum class WindMode(val label: String) {
+    SINGLE("Single Wind"),
+    THREE_ZONE("3-Zone Wind")
+}
+
+@Serializable
+data class WindZone(
+    val speedMph: Double = 5.0,
+    /** Wind clock direction relative to shooter (0=12 o'clock headwind, 90=3 o'clock from right). */
+    val directionDeg: Double = 90.0
+)
+
+/**
+ * Multi-zone wind banding: Single uniform wind (default) or 3-Zone (Near 0-33%, Mid 33-66%, Far 66-100%).
+ */
+@Serializable
+data class WindProfile(
+    val mode: WindMode = WindMode.SINGLE,
+    val near: WindZone = WindZone(5.0, 90.0),
+    val mid: WindZone = WindZone(5.0, 90.0),
+    val far: WindZone = WindZone(5.0, 90.0)
+) {
+    /**
+     * Computes the ballistic range-weighted vector average wind across Near (0-33%), Mid (33-66%),
+     * and Far (66-100%) zones for single-wind devices such as the Bushnell LBC1800.
+     * Downrange deflection leverage weights for 3 equal range bands are 5/9, 3/9, and 1/9.
+     */
+    fun rangeWeightedAverage(): WindZone {
+        val wNear = 5.0 / 9.0
+        val wMid = 3.0 / 9.0
+        val wFar = 1.0 / 9.0
+
+        val nRad = Math.toRadians(near.directionDeg)
+        val mRad = Math.toRadians(mid.directionDeg)
+        val fRad = Math.toRadians(far.directionDeg)
+
+        val vx = wNear * near.speedMph * kotlin.math.cos(nRad) +
+            wMid * mid.speedMph * kotlin.math.cos(mRad) +
+            wFar * far.speedMph * kotlin.math.cos(fRad)
+        val vz = wNear * near.speedMph * kotlin.math.sin(nRad) +
+            wMid * mid.speedMph * kotlin.math.sin(mRad) +
+            wFar * far.speedMph * kotlin.math.sin(fRad)
+
+        val avgSpeed = kotlin.math.sqrt(vx * vx + vz * vz)
+        val avgDeg = if (avgSpeed < 1e-4) {
+            near.directionDeg
+        } else {
+            ((Math.toDegrees(kotlin.math.atan2(vz, vx)) % 360.0) + 360.0) % 360.0
+        }
+        return WindZone(speedMph = avgSpeed, directionDeg = avgDeg)
+    }
+}
+
+@Serializable
+data class Atmosphere(
+    val temperatureF: Double = 59.0,
+    val pressureInHg: Double = 29.92,
+    val pressureIsStation: Boolean = true,
+    val altitudeFeet: Double = 0.0,
+    val humidityPercent: Double = 50.0,
+    val windSpeedMph: Double = 5.0,
+    val windGustMph: Double = 0.0,
+    /** Wind clock direction relative to shooter in degrees: 0 = 12 o'clock (headwind), 90 = 3 o'clock (from right), 180 = 6 o'clock (tailwind), 270 = 9 o'clock (from left). */
+    val windDirectionDeg: Double = 90.0,
+    /** True meteorological compass wind direction (where wind blows FROM, 0=N, 90=E, 180=S, 270=W), populated by GPS weather. */
+    val meteoWindFromDeg: Double? = null,
+    /** Shooter's target bearing in compass degrees (0=N, 90=E, 180=S, 270=W). */
+    val shootingBearingDeg: Double = 0.0,
+    val gpsLatitude: Double? = null,
+    val gpsLongitude: Double? = null,
+    val weatherUpdatedAt: String? = null,
+    val manualWindOverride: Boolean = false,
+    /** Optional multi-zone wind profile (null or SINGLE uses windSpeedMph/windDirectionDeg). */
+    val windProfile: WindProfile? = null
+) {
+    val isThreeZoneWind: Boolean
+        get() = windProfile?.mode == WindMode.THREE_ZONE
+
+    /** Effective single-wind vector (range-weighted average when 3-Zone Wind is active). */
+    fun effectiveSingleWind(): WindZone {
+        val wp = windProfile
+        return if (wp != null && wp.mode == WindMode.THREE_ZONE) {
+            wp.rangeWeightedAverage()
+        } else {
+            WindZone(windSpeedMph, windDirectionDeg)
+        }
+    }
+}
+
+@Serializable
+enum class DistanceUnit(val shortLabel: String, val fullLabel: String) {
+    YARDS("yd", "Yards"),
+    METERS("m", "Meters")
+}
+
+@Serializable
+enum class AngularUnit(val shortLabel: String, val fullLabel: String) {
+    MOA("MOA", "MOA"),
+    MRAD("MRAD", "MRAD"),
+    INCHES("in", "Inches"),
+    CENTIMETERS("cm", "Centimeters")
+}
+
+@Serializable
+enum class VelocityUnit(val shortLabel: String) {
+    FPS("fps"),
+    MPS("m/s")
+}
+
+@Serializable
+enum class TemperatureUnit(val shortLabel: String) {
+    FAHRENHEIT("°F"),
+    CELSIUS("°C")
+}
+
+@Serializable
+enum class PressureUnit(val shortLabel: String) {
+    INHG("inHg"),
+    HPA("hPa")
+}
+
+@Serializable
+enum class WindUnit(val shortLabel: String) {
+    MPH("mph"),
+    MPS("m/s"),
+    KPH("km/h")
+}
+
+@Serializable
+enum class AppThemeMode(val label: String, val subtitle: String) {
+    FIELD_DARK("Field Dark", "High-contrast anodized matte graphite"),
+    NIGHT_RED("Night Red", "True OLED red-spectrum preserves night vision"),
+    DAYLIGHT("Daylight", "Crisp high-contrast titanium white for sun")
+}
+
+@Serializable
+enum class UiTextScale(val label: String, val factor: Float) {
+    COMPACT("Compact", 0.92f),
+    STANDARD("Standard", 1.0f),
+    LARGE("Large", 1.12f),
+    EXTRA_LARGE("XL Field", 1.24f)
+}
+
+@Serializable
+data class UserPreferences(
+    val distanceUnit: DistanceUnit = DistanceUnit.YARDS,
+    val angularUnit: AngularUnit = AngularUnit.MRAD,
+    val autoMatchScopeUnit: Boolean = true,
+    val velocityUnit: VelocityUnit = VelocityUnit.FPS,
+    val temperatureUnit: TemperatureUnit = TemperatureUnit.FAHRENHEIT,
+    val pressureUnit: PressureUnit = PressureUnit.INHG,
+    val windUnit: WindUnit = WindUnit.MPH,
+    val themeMode: AppThemeMode = AppThemeMode.FIELD_DARK,
+    val textScale: UiTextScale = UiTextScale.STANDARD,
+    val keepScreenAwake: Boolean = true,
+    val includeSpinDrift: Boolean = true,
+    val includeCoriolis: Boolean = true,
+    val includeAeroJump: Boolean = true,
+    val rangeCardStepYards: Int = 25,
+    val rangeCardMaxYards: Int = 300,
+    val activeFirearmId: String = "gun-cz-457",
+    val activeScopeId: String = "scope-arken-sh4-gen2",
+    val activeAmmoId: String = "ammo-cci-quiet22-40",
+    val activeSuppressorId: String? = "supp-gemtech-gm22",
+    /** Scopes stay completely independent across firearms; ammo can still be remembered per firearm. */
+    val firearmAmmoMemory: Map<String, String> = mapOf(
+        "gun-cz-457" to "ammo-cci-quiet22-40",
+        "gun-ruger-1022" to "ammo-cci-blazer-22-40",
+        "gun-anderson-ar15" to "ammo-wolf-gold-223-55",
+        "gun-glock-17-g4" to "ammo-fed-syntech-9mm-124"
+    ),
+    val lastConnectedBleAddress: String? = null,
+    val lastConnectedBleName: String? = null,
+    val defaultAtmosphere: Atmosphere = Atmosphere()
+)
+
+data class BallisticSolution(
+    val rangeYards: Double,
+    val trueHorizontalYards: Double,
+    val angleDegrees: Double,
+    /** Positive = hold/dial UP (bullet hits low); Negative = hold/dial DOWN (bullet hits high). */
+    val elevationMoa: Double,
+    val elevationMrad: Double,
+    val dropInches: Double,
+    val elevationClicks: Double,
+    /** Positive = hold/dial RIGHT (bullet drifted left); Negative = hold/dial LEFT (bullet drifted right). */
+    val windageMoa: Double,
+    val windageMrad: Double,
+    val windDriftInches: Double,
+    val windageClicks: Double,
+    /** Wind hold if gusts hit (null if no gust above sustained wind). */
+    val gustWindageMoa: Double? = null,
+    val gustWindageMrad: Double? = null,
+    val windValuePercent: Int = 100,
+    val spinDriftInches: Double = 0.0,
+    val aeroJumpMoa: Double = 0.0,
+    val coriolisElevMoa: Double = 0.0,
+    val coriolisWindMoa: Double = 0.0,
+    val moverLeadMoa: Double = 0.0,
+    val moverLeadMrad: Double = 0.0,
+    val moverLeadInches: Double = 0.0,
+    val velocityFps: Double,
+    val energyFtLbs: Double,
+    val timeOfFlightSec: Double,
+    val mach: Double,
+    val stabilityFactorSg: Double = 1.5,
+    val appliedDsf: Double = 1.0,
+    val densityAltitudeFt: Double,
+    val reachedTarget: Boolean = true,
+    /** True only when a supersonic-launched projectile drops below Mach 1.2 (transonic instability). */
+    val isTransonicWarning: Boolean = false,
+    val exceedsOnboard800YdLimit: Boolean = false
+)
+
+/**
+ * Single target inside a PRS / Field Stage Card (up to 10 targets per stage).
+ * Null wind overrides inherit the live solver atmosphere wind.
+ */
+@Serializable
+data class StageTarget(
+    val id: String = UUID.randomUUID().toString(),
+    val label: String = "T1",
+    val rangeYards: Double = 300.0,
+    val inclinationDeg: Double = 0.0,
+    val windSpeedMph: Double? = null,
+    val windDirectionDeg: Double? = null,
+    val moverSpeedMph: Double = 0.0,
+    val notes: String = ""
+)
+
+/**
+ * Named PRS / Field Multi-Target Stage Card persisted in DataStore.
+ */
+@Serializable
+data class StageCard(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "Stage 1",
+    val targets: List<StageTarget> = emptyList(),
+    val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+/**
+ * Cold Bore & Range Session Dope Log entry persisted in DataStore.
+ */
+@Serializable
+data class SessionLogEntry(
+    val id: String = UUID.randomUUID().toString(),
+    val timestampMs: Long = System.currentTimeMillis(),
+    val firearmId: String,
+    val firearmName: String,
+    val scopeId: String,
+    val scopeName: String,
+    val ammoId: String,
+    val ammoName: String,
+    val suppressorId: String? = null,
+    val suppressorName: String? = null,
+    val temperatureF: Double,
+    val stationPressureInHg: Double,
+    val densityAltitudeFt: Double,
+    val windSpeedMph: Double,
+    val windDirectionDeg: Double,
+    val targetRangeYards: Double,
+    val inclinationDeg: Double = 0.0,
+    val angularUnit: AngularUnit = AngularUnit.MRAD,
+    val predictedElevation: Double,
+    val predictedWindage: Double,
+    val actualElevation: Double,
+    val actualWindage: Double,
+    val isColdBore: Boolean = false,
+    val notes: String = ""
+)
+
+/**
+ * Versioned full-arsenal JSON backup payload (schemaVersion = 1).
+ */
+@Serializable
+data class ArsenalBackup(
+    val schemaVersion: Int = 1,
+    val exportedAtMs: Long = System.currentTimeMillis(),
+    val appVersion: String = "1.0.0",
+    val firearms: List<FirearmSetup> = emptyList(),
+    val scopes: List<ScopeSetup> = emptyList(),
+    val ammoLoads: List<AmmoLoad> = emptyList(),
+    val suppressors: List<SuppressorSetup> = emptyList(),
+    val stageCards: List<StageCard> = emptyList(),
+    val sessionLogs: List<SessionLogEntry> = emptyList(),
+    val preferences: UserPreferences = UserPreferences()
+)
+
+enum class BackupImportMode {
+    MERGE,
+    OVERWRITE
+}
+
+object DefaultProfiles {
+
+    val starterFirearms: List<FirearmSetup> = listOf(
+        FirearmSetup(
+            id = "gun-cz-457",
+            name = "CZ 457 (.22 LR)",
+            category = FirearmCategory.RIFLE,
+            caliberHint = ".22 LR",
+            barrelLengthInches = 20.5,
+            barrelTwistInches = 16.0,
+            twistDirection = TwistDirection.RIGHT,
+            isFavorite = true,
+            notes = "Bolt-action rimfire rifle • 1:16\" RH twist"
+        ),
+        FirearmSetup(
+            id = "gun-ruger-1022",
+            name = "Ruger 10/22 Carbine (.22 LR)",
+            category = FirearmCategory.RIFLE,
+            caliberHint = ".22 LR",
+            barrelLengthInches = 18.5,
+            barrelTwistInches = 16.0,
+            twistDirection = TwistDirection.RIGHT,
+            isFavorite = true,
+            notes = "Semi-auto rimfire carbine • Stainless barrel • 1:16\" RH twist"
+        ),
+        FirearmSetup(
+            id = "gun-anderson-ar15",
+            name = "Anderson AR-15 (.223 / 5.56)",
+            category = FirearmCategory.RIFLE,
+            caliberHint = ".223 Rem / 5.56 NATO",
+            barrelLengthInches = 16.0,
+            barrelTwistInches = 8.0,
+            twistDirection = TwistDirection.RIGHT,
+            isFavorite = true,
+            notes = "Anderson Manufacturing AR-15 • 1:8\" RH twist (edit if 1:7\" or 1:9\")"
+        ),
+        FirearmSetup(
+            id = "gun-glock-17-g4",
+            name = "Glock 17 Gen 4 (9mm)",
+            category = FirearmCategory.HANDGUN,
+            caliberHint = "9mm Luger",
+            barrelLengthInches = 4.49,
+            barrelTwistInches = 9.84,
+            twistDirection = TwistDirection.RIGHT,
+            isFavorite = true,
+            notes = "Glock G4 17 • 4.49\" polygonal barrel • 1:9.84\" RH twist"
+        ),
+        FirearmSetup(
+            id = "gun-generic-rifle",
+            name = "Generic Centerfire Rifle",
+            category = FirearmCategory.RIFLE,
+            caliberHint = "Any Rifle",
+            barrelLengthInches = 20.0,
+            barrelTwistInches = 10.0,
+            twistDirection = TwistDirection.RIGHT,
+            isFavorite = false,
+            notes = "Generic rifle template — duplicate or edit for any new rifle"
+        ),
+        FirearmSetup(
+            id = "gun-generic-handgun",
+            name = "Generic Handgun / Pistol",
+            category = FirearmCategory.HANDGUN,
+            caliberHint = "Any Handgun",
+            barrelLengthInches = 4.5,
+            barrelTwistInches = 10.0,
+            twistDirection = TwistDirection.RIGHT,
+            isFavorite = false,
+            notes = "Generic handgun template — duplicate or edit for any pistol"
+        )
+    )
+
+    val starterScopes: List<ScopeSetup> = listOf(
+        ScopeSetup(
+            id = "scope-arken-sh4-gen2",
+            name = "Arken SH-4 Gen II 4-16x50",
+            scopeModel = "Arken SH-4 Gen II 4-16x50 FFP (0.1 MRAD)",
+            category = ScopeCategory.RIFLE_SCOPE,
+            reticleType = ReticleType.ARKEN_VPR_MIL,
+            weaponMode = WeaponMode.RIFLE,
+            sightHeightInches = 1.85,
+            zeroRangeYards = 50.0,
+            clickUnit = ClickUnit.TENTH_MRAD,
+            isFavorite = true,
+            notes = "WestHunter rings w/ level • 0.1 MRAD Zero Stop • VPR MIL Christmas Tree"
+        ),
+        ScopeSetup(
+            id = "scope-pa-4-14x44",
+            name = "Primary Arms 4-14x44 FFP",
+            scopeModel = "Primary Arms 4-14x44mm FFP (1/4 MOA)",
+            category = ScopeCategory.RIFLE_SCOPE,
+            reticleType = ReticleType.PA_ARC2_MOA,
+            weaponMode = WeaponMode.RIFLE,
+            sightHeightInches = 2.50,
+            zeroRangeYards = 50.0,
+            clickUnit = ClickUnit.QUARTER_MOA,
+            isFavorite = true,
+            notes = "Cantilever mount • 1/4 MOA turrets • ARC-2 MOA (switchable to ACSS R-Grid)"
+        ),
+        ScopeSetup(
+            id = "scope-ar15-optic",
+            name = "AR-15 Optic / Red Dot (2.6\" SH)",
+            scopeModel = "Standard AR-Height Scope or Red Dot",
+            category = ScopeCategory.RED_DOT_IRON,
+            reticleType = ReticleType.RED_DOT_CIRCLE_65,
+            weaponMode = WeaponMode.RIFLE,
+            sightHeightInches = 2.60,
+            zeroRangeYards = 100.0,
+            clickUnit = ClickUnit.HALF_MOA,
+            isFavorite = true,
+            notes = "Standard 2.60\" AR-15 bore-to-optic height • 2 MOA Dot / 65 MOA Ring"
+        ),
+        ScopeSetup(
+            id = "scope-eotech-512-g33",
+            name = "EOTech 512 + G33 3x Magnifier",
+            scopeModel = "HWS 512 (AA) + G33 3x STS Magnifier",
+            category = ScopeCategory.RED_DOT_IRON,
+            reticleType = ReticleType.EOTECH_HWS_68,
+            weaponMode = WeaponMode.RIFLE,
+            sightHeightInches = 2.60,
+            zeroRangeYards = 50.0,
+            clickUnit = ClickUnit.HALF_MOA,
+            isFavorite = true,
+            notes = "68 MOA ring + 1 MOA dot • 0.5 MOA clicks • Flip-to-side G33 3x • 50/200 yd zero"
+        ),
+        ScopeSetup(
+            id = "scope-handgun-sights",
+            name = "Handgun Iron Sights / Red Dot",
+            scopeModel = "Glock Iron Sights / Slide Optic",
+            category = ScopeCategory.HANDGUN_OPTIC,
+            reticleType = ReticleType.HANDGUN_THREE_DOT,
+            weaponMode = WeaponMode.RIFLE,
+            sightHeightInches = 0.75,
+            zeroRangeYards = 25.0,
+            clickUnit = ClickUnit.QUARTER_MOA,
+            isFavorite = true,
+            notes = "Glock 17 3-Dot U-Notch iron sights (~0.65\") or slide red dot (~1.0\") • 25 yd zero"
+        )
+    )
+
+    val starterAmmo: List<AmmoLoad> = listOf(
+        AmmoLoad("ammo-cci-quiet22-40", "CCI Quiet-22 — 40gr LRN", ".22 LR", AmmoCategory.RIMFIRE, DragModel.G1, 0.120, 710.0, 40.0, 0.223, bulletLengthInches = 0.480, isFavorite = true, notes = "Subsonic 710 fps Lead Round Nose"),
+        AmmoLoad("ammo-win-supersupp-45", "Winchester Super Suppressed — 45gr", ".22 LR", AmmoCategory.RIMFIRE, DragModel.G1, 0.130, 1090.0, 45.0, 0.223, bulletLengthInches = 0.515, isFavorite = true, notes = "45gr Black Copper-Plated RN Subsonic (1090 fps)"),
+        AmmoLoad("ammo-std-vel-40", "Standard Velocity (Tiger-Cat) — 40gr LRN", ".22 LR", AmmoCategory.RIMFIRE, DragModel.G1, 0.120, 1070.0, 40.0, 0.223, bulletLengthInches = 0.480, isFavorite = true, notes = "Standard Velocity 40gr Lead Round Nose (1070 fps)"),
+        AmmoLoad("ammo-cci-blazer-22-40", "CCI Blazer .22 LR — 40gr LRN", ".22 LR", AmmoCategory.RIMFIRE, DragModel.G1, 0.133, 1235.0, 40.0, 0.223, bulletLengthInches = 0.480, isFavorite = true, notes = "High Velocity 40gr LRN (1235 fps)"),
+        AmmoLoad("ammo-cci-minimag-36", "CCI Mini-Mag HP — 36gr CPHP", ".22 LR", AmmoCategory.RIMFIRE, DragModel.G1, 0.125, 1260.0, 36.0, 0.223, bulletLengthInches = 0.455, isFavorite = true, notes = "36gr Copper-Plated Hollow Point (1260 fps)"),
+        AmmoLoad("ammo-wolf-gold-223-55", "Wolf Gold .223 Rem — 55gr FMJ", ".223 Rem", AmmoCategory.RIFLE, DragModel.G1, 0.255, 3150.0, 55.0, 0.224, bulletLengthInches = 0.740, isFavorite = true, notes = "Copper-jacketed 55gr FMJ (3250 fps / 24\", ~3150 in 16\" AR)"),
+        AmmoLoad("ammo-ae-msr-556-55", "Federal American Eagle MSR 5.56 — 55gr FMJ", "5.56x45mm NATO", AmmoCategory.RIFLE, DragModel.G1, 0.246, 3165.0, 55.0, 0.224, bulletLengthInches = 0.740, isFavorite = true, notes = "Military-grade 5.56x45mm 55gr FMJ (3165 fps)"),
+        AmmoLoad("ammo-fed-le-223-62", "Federal Premium LE Tactical .223 — 62gr SP", ".223 Rem", AmmoCategory.RIFLE, DragModel.G1, 0.224, 3050.0, 62.0, 0.224, bulletLengthInches = 0.785, isFavorite = true, notes = "Law Enforcement Tactical Bonded 62gr SP (LE223T3)"),
+        AmmoLoad("ammo-scorpio-223-55", "STV Scorpio .223 Rem — 55gr FMJ", ".223 Rem", AmmoCategory.RIFLE, DragModel.G1, 0.250, 3150.0, 55.0, 0.224, bulletLengthInches = 0.740, isFavorite = true, notes = "Scorpio .223 Remington 55gr FMJ"),
+        AmmoLoad("ammo-fed-syntech-9mm-124", "Federal Syntech Range 9mm — 124gr TSJ", "9mm Luger", AmmoCategory.HANDGUN, DragModel.G1, 0.150, 1110.0, 124.0, 0.355, bulletLengthInches = 0.590, isFavorite = true, notes = "124gr Total Synthetic Jacket (1110 fps)"),
+        AmmoLoad("ammo-blazer-brass-9mm-115", "CCI Blazer Brass 9mm — 115gr FMJ", "9mm Luger", AmmoCategory.HANDGUN, DragModel.G1, 0.125, 1145.0, 115.0, 0.355, bulletLengthInches = 0.560, isFavorite = true, notes = "Blazer Brass 115gr FMJ (edit to 124gr / 1090 fps if 124gr box)"),
+        AmmoLoad("ammo-blazer-alum-9mm-115", "CCI Blazer Aluminum 9mm — 115gr FMJ", "9mm Luger", AmmoCategory.HANDGUN, DragModel.G1, 0.125, 1145.0, 115.0, 0.355, bulletLengthInches = 0.560, isFavorite = true, notes = "Blazer Aluminum Case 115gr FMJ")
+    )
+
+    val starterSuppressors: List<SuppressorSetup> = listOf(
+        SuppressorSetup(
+            id = "supp-gemtech-gm22",
+            name = "Gemtech GM-22",
+            manufacturer = "Gemtech",
+            category = SuppressorCategory.RIMFIRE,
+            caliberRating = ".22 LR",
+            mountType = "1/2x28 Direct Thread",
+            lengthInches = 5.0,
+            weightOz = 2.5,
+            diameterInches = 1.0,
+            mvShiftFps = 0.0,
+            poiShiftVerticalInches = 0.0,
+            poiShiftHorizontalInches = 0.0,
+            isFavorite = true,
+            notes = "G-Core 7075 aluminum monocore • 5.0\" • 2.5 oz • 1/2x28"
+        )
+    )
+
+    val starterStageCards: List<StageCard> = listOf(
+        StageCard(
+            id = "stage-nrl22-practice",
+            name = "NRL22 / Field Rimfire Stage",
+            targets = listOf(
+                StageTarget(id = "t-1", label = "T1", rangeYards = 50.0, inclinationDeg = 0.0, notes = "KYL Rack"),
+                StageTarget(id = "t-2", label = "T2", rangeYards = 100.0, inclinationDeg = 2.0, notes = "2\" Steel"),
+                StageTarget(id = "t-3", label = "T3", rangeYards = 150.0, inclinationDeg = -3.0, windSpeedMph = 6.0, windDirectionDeg = 90.0, notes = "Barricade"),
+                StageTarget(id = "t-4", label = "T4", rangeYards = 200.0, inclinationDeg = 4.0, windSpeedMph = 8.0, windDirectionDeg = 75.0, notes = "Bonus Plate")
+            )
+        ),
+        StageCard(
+            id = "stage-prs-centerfire",
+            name = "PRS Centerfire 4-Target",
+            targets = listOf(
+                StageTarget(id = "cf-1", label = "T1", rangeYards = 315.0, inclinationDeg = 4.0, windSpeedMph = 8.0, windDirectionDeg = 75.0, notes = "Near Berm"),
+                StageTarget(id = "cf-2", label = "T2", rangeYards = 480.0, inclinationDeg = -2.0, windSpeedMph = 10.0, windDirectionDeg = 90.0, notes = "Mid Saddle"),
+                StageTarget(id = "cf-3", label = "T3", rangeYards = 640.0, inclinationDeg = 0.0, windSpeedMph = 12.0, windDirectionDeg = 105.0, notes = "Ridge IPSC"),
+                StageTarget(id = "cf-4", label = "T4", rangeYards = 810.0, inclinationDeg = 3.0, windSpeedMph = 14.0, windDirectionDeg = 90.0, moverSpeedMph = 3.0, notes = "Far Mover")
+            )
+        )
+    )
+
+    val starterProfiles: List<RifleProfile>
+        get() = listOf(
+            RifleProfile.combine(
+                starterFirearms.first(),
+                starterScopes.first(),
+                starterAmmo.first(),
+                starterSuppressors.firstOrNull()
+            )
+        )
+}

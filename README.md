@@ -84,7 +84,7 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
 # Install (or update) and launch the app
 & "$env:ANDROID_HOME\platform-tools\adb.exe" install -r "app\build\outputs\apk\debug\app-debug.apk"
-& "$env:ANDROID_HOME\platform-tools\adb.exe" shell monkey -p com.bc1800.ballistics -c android.intent.category.LAUNCHER 1
+& "$env:ANDROID_HOME\platform-tools\adb.exe" shell monkey -p com.gunnies.ballistics -c android.intent.category.LAUNCHER 1
 ```
 
 #### macOS / Linux
@@ -101,7 +101,7 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 # Install onto USB-connected phone
 "$ANDROID_HOME/platform-tools/adb" devices
 "$ANDROID_HOME/platform-tools/adb" install -r app/build/outputs/apk/debug/app-debug.apk
-"$ANDROID_HOME/platform-tools/adb" shell monkey -p com.bc1800.ballistics -c android.intent.category.LAUNCHER 1
+"$ANDROID_HOME/platform-tools/adb" shell monkey -p com.gunnies.ballistics -c android.intent.category.LAUNCHER 1
 ```
 
 > **Note:** On Windows, Gradle automatically locates the Android SDK if `ANDROID_HOME` is set or if you create a `local.properties` file containing `sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk`.
@@ -137,7 +137,7 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 ## Project Structure & Testing
 
 ```text
-app/src/main/java/com/bc1800/ballistics/
+app/src/main/java/com/gunnies/ballistics/
 ├── MainActivity.kt                  # Adaptive Z Fold NavigationRail / BottomBar + permissions + GPS trigger
 ├── ble/
 │   ├── Lbc1800Protocol.kt           # Checksum (XOR 0x8A), HDLC deframer, :DU/:DD/:AV/:BP command builders

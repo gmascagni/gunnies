@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.bc1800.ballistics"
+    namespace = "com.gunnies.ballistics"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.bc1800.ballistics"
+        applicationId = "com.gunnies.ballistics"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

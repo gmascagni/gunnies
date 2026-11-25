@@ -7,7 +7,7 @@
 -keepclasseswithmembers class kotlinx.serialization.json.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
--keep,includedescriptorclasses class com.bc1800.ballistics.model.**$$serializer { *; }
--keepclassmembers class com.bc1800.ballistics.model.** {
+-keep,includedescriptorclasses class com.gunnies.ballistics.model.**$$serializer { *; }
+-keepclassmembers class com.gunnies.ballistics.model.** {
     *** Companion;
 }

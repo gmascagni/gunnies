@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#090B0D">
+  <title>Gunnies Ballistics — Precision Ballistics Solver for Android</title>
+  <meta name="description" content="Precision ballistics for Android. Build your rig from 338+ factory profiles, pull live GPS weather and 3-zone wind, dial or hold in true-to-scale FFP reticles, and run PRS stage cards offline.">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Gunnies Ballistics — Precision Built for the Field">
+  <meta property="og:description" content="Real-time ballistic solutions, live GPS weather, 3-zone wind banding, illuminated FFP reticles, PRS stage cards, and shareable DOPE tables for Android.">
+  <meta property="og:image" content="assets/poster-16x9.jpg">
+
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="#top" class="brand" aria-label="Gunnies Ballistics Home">
+        <img src="assets/gunnies-icon-256.png" alt="" class="brand-icon" width="40" height="40">
+        <span class="brand-text">
+          <span class="brand-name">GUNNIES BALLISTICS</span>
+          <span class="brand-tag">PRECISION FIELD SOLVER</span>
+        </span>
+      </a>
+
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="#demo">Walkthrough</a>
+        <a href="#walkthrough">App Tour</a>
+        <a href="#features">Features</a>
+        <a href="#dope-preview">DOPE Card</a>
+        <a href="#get-app">Android App</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content">
+    <!-- HERO + EMBEDDED WALKTHROUGH PLAYER -->
+    <section id="top" class="hero">
+      <div class="hero-grid-bg" aria-hidden="true"></div>
+      <div class="container hero-layout">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="eyebrow-dot" aria-hidden="true"></span>
+            ANDROID PRECISION BALLISTICS
+          </p>
+          <h1>
+            PRECISION BUILT<br>
+            <span class="text-accent">FOR THE FIELD.</span>
+          </h1>
+          <p class="hero-lead">
+            Exact elevation clicks, live GPS weather and 3-zone wind calls, true-to-scale first focal plane reticles, and multi-target match cards—built to run fast and completely offline on your Android phone.
+          </p>
+
+          <div class="hero-cta">
+            <button type="button" class="btn btn-primary btn-lg" id="hero-play-btn">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6,4 20,12 6,20"></polygon></svg>
+              Watch Walkthrough
+            </button>
+            <a href="#walkthrough" class="btn btn-secondary btn-lg">
+              Explore the App
+            </a>
+          </div>
+
+          <dl class="telemetry-bar" aria-label="Key app highlights">
+            <div>
+              <dt>Factory Library</dt>
+              <dd>338+ Profiles</dd>
+            </div>
+            <div>
+              <dt>Drag Models</dt>
+              <dd>G1 &amp; G7</dd>
+            </div>
+            <div>
+              <dt>Optics View</dt>
+              <dd>True FFP</dd>
+            </div>
+            <div>
+              <dt>Field Ready</dt>
+              <dd>100% Offline</dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- HOSTED FLAGSHIP VIDEO PLAYER -->
+        <div id="demo" class="cinema-card">
+          <div class="cinema-header">
+            <div class="cinema-meta">
+              <span class="status-pill"><span class="live-dot" aria-hidden="true"></span>OFFICIAL APP WALKTHROUGH</span>
+              <span class="mono-dim">HD • 0:55</span>
+            </div>
+            <a href="media/gunnies-tutorial-16x9.mp4" download="Gunnies_Ballistics_Walkthrough.mp4" class="cinema-dl">
+              Download Video
+            </a>
+          </div>
+
+          <div class="video-stage" id="video-stage">
+            <img
+              id="hero-poster-img"
+              src="assets/poster-16x9.webp"
+              alt="Gunnies Ballistics Solver HUD running on a smartphone on a wooden shooting bench at golden hour"
+              class="video-poster-cover"
+              fetchpriority="high"
+              width="1920"
+              height="1080"
+            >
+            <button type="button" class="video-big-play" id="poster-play-overlay" aria-label="Play Gunnies Ballistics walkthrough video">
+              <span class="play-ring">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="7,4 20,12 7,20"></polygon></svg>
+              </span>
+              <span class="play-label">PLAY WALKTHROUGH • 0:55</span>
+            </button>
+
+            <video
+              id="main-video"
+              class="main-video"
+              controls
+              playsinline
+              preload="metadata"
+              poster="assets/poster-16x9.webp"
+              width="1920"
+              height="1080"
+            >
+              <source src="media/gunnies-tutorial-16x9.mp4" type="video/mp4">
+              Your browser does not support HTML5 video.
+              <a href="media/gunnies-tutorial-16x9.mp4">Download the video here</a>.
+            </video>
+          </div>
+
+          <!-- Interactive Scene Chapter Scrubber -->
+          <div class="chapter-strip" role="group" aria-label="Jump to walkthrough chapter">
+            <button type="button" class="chapter-btn is-active" data-seek="0">
+              <span class="ch-num">01</span>
+              <span class="ch-name">Arsenal Setup</span>
+            </button>
+            <button type="button" class="chapter-btn" data-seek="9.25">
+              <span class="ch-num">02</span>
+              <span class="ch-name">GPS &amp; Wind</span>
+            </button>
+            <button type="button" class="chapter-btn" data-seek="19.0">
+              <span class="ch-num">03</span>
+              <span class="ch-name">Solver HUD</span>
+            </button>
+            <button type="button" class="chapter-btn" data-seek="28.95">
+              <span class="ch-num">04</span>
+              <span class="ch-name">FFP Reticle</span>
+            </button>
+            <button type="button" class="chapter-btn" data-seek="36.8">
+              <span class="ch-num">05</span>
+              <span class="ch-name">Stage Card</span>
+            </button>
+            <button type="button" class="chapter-btn" data-seek="45.35">
+              <span class="ch-num">06</span>
+              <span class="ch-name">DOPE Card</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6-SCENE INTERACTIVE APP TOUR -->
+    <section id="walkthrough" class="section">
+      <div class="container">
+        <div class="section-head">
+          <p class="section-kicker">01 // INSIDE THE APP</p>
+          <h2>From Bench Setup to First-Round Impact</h2>
+          <p class="section-sub">
+            Inspect any screen up close or jump the walkthrough video straight to that feature.
+          </p>
+        </div>
+
+        <div class="scene-grid">
+          <article class="scene-card reveal-on-scroll">
+            <div class="scene-thumb-wrap">
+              <img src="assets/scene-1.webp" alt="Arsenal Setup screen showing firearm, optic, ammunition, and suppressor profiles on a dark range mat" loading="lazy" width="1440" height="810">
+              <span class="scene-badge">01 / 06 • 0:00</span>
+            </div>
+            <div class="scene-body">
+              <h3>Modular Arsenal Setup</h3>
+              <p>Mix and match independent profiles for your rifles, scopes, ammo loads, and suppressors—starting from 338+ factory entries or your own custom setups.</p>
+              <div class="scene-actions">
+                <button type="button" class="btn-link" data-lightbox="assets/ui-arsenal.webp" data-caption="Arsenal Setup — Independent profiles for Guns, Scopes, Ammo, and Cans with 338+ preloaded items.">Inspect Screen</button>
+                <button type="button" class="btn-link accent" data-jump-video="0">Watch Clip →</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="scene-card reveal-on-scroll">
+            <div class="scene-thumb-wrap">
+              <img src="assets/scene-2.webp" alt="GPS Weather Station and 3-Zone Wind screen at an outdoor rifle range" loading="lazy" width="1440" height="810">
+              <span class="scene-badge">02 / 06 • 0:09</span>
+            </div>
+            <div class="scene-body">
+              <h3>Live GPS Weather &amp; 3-Zone Wind</h3>
+              <p>Tap Sync GPS to pull local temperature, station pressure, density altitude, and wind—or split shifting terrain winds across Near, Mid, and Far zones.</p>
+              <div class="scene-actions">
+                <button type="button" class="btn-link" data-lightbox="assets/ui-weather.webp" data-caption="GPS Weather Station &amp; Wind — Live local atmospherics, Density Altitude, and 3-Zone wind banding.">Inspect Screen</button>
+                <button type="button" class="btn-link accent" data-jump-video="9.25">Watch Clip →</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="scene-card reveal-on-scroll">
+            <div class="scene-thumb-wrap">
+              <img src="assets/scene-3.webp" alt="Gunnies Ballistics Solver HUD on a wooden shooting bench showing 150 yard elevation and windage solution" loading="lazy" width="1440" height="810">
+              <span class="scene-badge">03 / 06 • 0:19</span>
+            </div>
+            <div class="scene-body">
+              <h3>Live Solver HUD &amp; Truing</h3>
+              <p>Instant elevation clicks, windage holds, stability factor, incline angle lock, muzzle velocity and transonic drop truing, plus one-tap shot logging.</p>
+              <div class="scene-actions">
+                <button type="button" class="btn-link" data-lightbox="assets/ui-solver.webp" data-caption="Solver HUD — Real-time elevation clicks, windage holds, incline angle, truing, and one-tap shot logging.">Inspect Screen</button>
+                <button type="button" class="btn-link accent" data-jump-video="19.0">Watch Clip →</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="scene-card reveal-on-scroll">
+            <div class="scene-thumb-wrap">
+              <img src="assets/scene-4.webp" alt="Illuminated red first focal plane reticle overlay beside a precision rifle scope turret" loading="lazy" width="1440" height="810">
+              <span class="scene-badge">04 / 06 • 0:29</span>
+            </div>
+            <div class="scene-body">
+              <h3>True-to-Scale FFP Reticle</h3>
+              <p>Switch effortlessly between holding everything or dialing elevation and holding wind inside an illuminated reticle matched to your magnification.</p>
+              <div class="scene-actions">
+                <button type="button" class="btn-link" data-lightbox="assets/ui-reticle.webp" data-caption="Optical Reticle View — Illuminated first focal plane reticle scaled to your scope and magnification.">Inspect Screen</button>
+                <button type="button" class="btn-link accent" data-jump-video="28.95">Watch Clip →</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="scene-card reveal-on-scroll">
+            <div class="scene-thumb-wrap">
+              <img src="assets/scene-5.webp" alt="PRS Multi-Target Stage Card showing targets T1, T2, and T3 at a wooden shooting barricade" loading="lazy" width="1440" height="810">
+              <span class="scene-badge">05 / 06 • 0:37</span>
+            </div>
+            <div class="scene-body">
+              <h3>Multi-Target Stage Cards</h3>
+              <p>Save up to 10 targets per match or hunting stage with individual distances, incline angles, wind holds, turret clicks, and time of flight at a glance.</p>
+              <div class="scene-actions">
+                <button type="button" class="btn-link" data-lightbox="assets/ui-stage.webp" data-caption="PRS Stage Card — Glove-friendly multi-target view with saved match and field stages.">Inspect Screen</button>
+                <button type="button" class="btn-link accent" data-jump-video="36.8">Watch Clip →</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="scene-card reveal-on-scroll">
+            <div class="scene-thumb-wrap">
+              <img src="assets/scene-6.webp" alt="Overhead flat-lay of DOPE Range Card table next to .22 LR rimfire cartridges and a stainless rifle bolt" loading="lazy" width="1440" height="810">
+              <span class="scene-badge">06 / 06 • 0:45</span>
+            </div>
+            <div class="scene-body">
+              <h3>Shareable DOPE Range Cards</h3>
+              <p>Build full muzzle-to-subsonic drop tables in 10, 25, 50, or 100-yard steps with velocity and flight time—ready to read on the line or share with your spotter.</p>
+              <div class="scene-actions">
+                <button type="button" class="btn-link" data-lightbox="assets/ui-dope.webp" data-caption="DOPE Range Card — Complete elevation, clicks, wind, velocity, and flight-time table ready to share.">Inspect Screen</button>
+                <button type="button" class="btn-link accent" data-jump-video="45.35">Watch Clip →</button>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONSUMER-FOCUSED PRECISION CAPABILITIES -->
+    <section id="features" class="section section-alt">
+      <div class="container">
+        <div class="section-head">
+          <p class="section-kicker">02 // BUILT FOR SHOOTERS</p>
+          <h2>Serious Ballistics Without the Clutter</h2>
+          <p class="section-sub">
+            Every feature inside Gunnies Ballistics is designed for speed on the firing line, crisp readability in bright sun or dusk, and reliable accuracy from rimfire to long-range centerfire.
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <div class="feature-card reveal-on-scroll">
+            <span class="feature-tag">MULTI-BC</span>
+            <h3>Velocity-Banded BCs</h3>
+            <p>Add up to 5 velocity-banded ballistic coefficients per load to track bullets accurately as they slow downrange across supersonic and transonic flight.</p>
+          </div>
+          <div class="feature-card reveal-on-scroll">
+            <span class="feature-tag">CALIBRATION</span>
+            <h3>MV &amp; Drop Scale Truing</h3>
+            <p>True muzzle velocity cleanly at supersonic distance, then lock MV and calibrate Drop Scale Factor (DSF) for pinpoint subsonic and extended-range hits.</p>
+          </div>
+          <div class="feature-card reveal-on-scroll">
+            <span class="feature-tag">WIND</span>
+            <h3>3-Zone Terrain Wind</h3>
+            <p>Break tricky canyon or valley crosswinds into Near, Mid, and Far zones—or run fast single-wind calls synced straight from local GPS weather.</p>
+          </div>
+          <div class="feature-card reveal-on-scroll">
+            <span class="feature-tag">ANGLE</span>
+            <h3>Phone Inclinometer &amp; Awake Mode</h3>
+            <p>Measure uphill and downhill shooting angles right with your phone and keep the high-contrast display awake continuously while you shoot.</p>
+          </div>
+          <div class="feature-card reveal-on-scroll">
+            <span class="feature-tag">LOGBOOK</span>
+            <h3>Cold-Bore Log &amp; Arsenal Backups</h3>
+            <p>Log cold-bore shots alongside predicted vs. actual holds and weather snapshots—and export or restore your full arsenal backup anytime.</p>
+          </div>
+          <div class="feature-card reveal-on-scroll">
+            <span class="feature-tag">LIBRARY</span>
+            <h3>338+ Factory Profiles Built In</h3>
+            <p>Get dialed in fast with hundreds of popular rifles, handguns, scopes, factory ammo loads, and suppressors preloaded and ready to favorite.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- RESPONSIVE INTERACTIVE SAMPLE DOPE TABLE -->
+    <section id="dope-preview" class="section">
+      <div class="container">
+        <div class="section-head dope-head-row">
+          <div>
+            <p class="section-kicker">03 // SAMPLE DOPE OUTPUT</p>
+            <h2>Subsonic .22 LR Range Card</h2>
+            <p class="section-sub">
+              Ruger 10/22 Carbine • CCI Quiet-22 (40 gr LRN) • 50 yd Zero • 55°F / 29.05 inHg (806 ft DA) • Wind 13.9 mph @ 6:00.
+            </p>
+          </div>
+          <div class="unit-toggle" role="group" aria-label="Switch angular units">
+            <button type="button" class="unit-btn is-active" data-unit="moa" aria-pressed="true">MOA (1/4)</button>
+            <button type="button" class="unit-btn" data-unit="mrad" aria-pressed="false">MRAD (0.1)</button>
+          </div>
+        </div>
+
+        <div tabindex="0" role="region" aria-labelledby="dope-table-caption" class="table-wrapper">
+          <table class="dope-table" id="dope-table">
+            <caption id="dope-table-caption" class="sr-only">Sample Gunnies Ballistics DOPE Range Card for Ruger 10/22 with CCI Quiet-22</caption>
+            <thead>
+              <tr>
+                <th scope="col">Range (yd)</th>
+                <th scope="col" id="th-elev">Elevation (MOA)</th>
+                <th scope="col">Clicks</th>
+                <th scope="col" id="th-wind">Wind (MOA)</th>
+                <th scope="col">Velocity (fps)</th>
+                <th scope="col">TOF (s)</th>
+              </tr>
+            </thead>
+            <tbody id="dope-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONSUMER APP CTA -->
+    <section id="get-app" class="section section-alt">
+      <div class="container">
+        <div class="cta-panel reveal-on-scroll">
+          <div class="cta-panel-copy">
+            <p class="section-kicker">04 // ANDROID PHONES &amp; FOLDABLES</p>
+            <h2>Ready for Your Range Bag</h2>
+            <p>
+              Clean dark-mode optics interface tailored for standard Android phones, tablets, and dual-pane foldables. No accounts, no subscriptions, and zero cell signal required once you're on the line.
+            </p>
+            <div class="cta-actions">
+              <button type="button" class="btn btn-primary btn-lg" id="footer-play-btn">
+                Watch Field Walkthrough
+              </button>
+              <a href="media/gunnies-tutorial-16x9.mp4" download="Gunnies_Ballistics_Walkthrough.mp4" class="btn btn-secondary btn-lg">
+                Download HD Video
+              </a>
+            </div>
+          </div>
+          <div class="cta-panel-badge">
+            <img src="assets/gunnies-icon-256.png" alt="Gunnies Ballistics illuminated red MOA bullseye reticle app icon" loading="lazy" width="144" height="144">
+            <div class="pkg-pill">GUNNIES BALLISTICS</div>
+            <div class="pkg-sub">Android • Offline-First</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <img src="assets/gunnies-icon-256.png" alt="" width="28" height="28" loading="lazy">
+        <span>GUNNIES BALLISTICS — Precision built for the field.</span>
+      </div>
+      <div class="footer-links">
+        <a href="#demo">Walkthrough</a>
+        <a href="#walkthrough">App Tour</a>
+        <a href="#features">Features</a>
+        <a href="#dope-preview">DOPE Card</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- NATIVE MODAL DIALOG: OLED SCREENSHOT LIGHTBOX (closedby="any" + Safari fallback) -->
+  <dialog id="lightbox-dialog" class="media-dialog lightbox-dialog" closedby="any" aria-labelledby="lightbox-title">
+    <div class="dialog-shell">
+      <div class="dialog-bar">
+        <h2 id="lightbox-title">App Screen Preview</h2>
+        <button type="button" class="btn-icon-close" data-close-dialog="lightbox-dialog" aria-label="Close screenshot preview">✕</button>
+      </div>
+      <figure class="lightbox-figure">
+        <img id="lightbox-img" src="assets/ui-solver.webp" alt="" fetchpriority="low">
+        <figcaption id="lightbox-caption"></figcaption>
+      </figure>
+    </div>
+  </dialog>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

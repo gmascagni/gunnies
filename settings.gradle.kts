@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BC1800Ballistics"
+rootProject.name = "GunniesBallistics"
 include(":app")

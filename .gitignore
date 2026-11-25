@@ -26,3 +26,6 @@ local.properties
 # Node / Flutter
 node_modules/
 .dart_tool/
+
+# Raw local 4K video masters (web-optimized versions are hosted in docs/media/)
+exports/
