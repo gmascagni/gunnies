@@ -1,0 +1,176 @@
+name: Android Build & APK Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish a GitHub Release with the built APK"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      release_tag:
+        description: "Tag name when publish_release=true (e.g. v1.0.0; defaults to v<versionName>)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Test, Build APK & Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Read app version from Gradle config
+        id: version
+        shell: bash
+        run: |
+          VERSION_NAME=$(grep -oE 'versionName\s*=\s*"[^"]+"' app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)"/\1/')
+          VERSION_CODE=$(grep -oE 'versionCode\s*=\s*[0-9]+' app/build.gradle.kts | head -n1 | awk '{print $3}')
+          echo "name=${VERSION_NAME:-1.0.0}" >> "$GITHUB_OUTPUT"
+          echo "code=${VERSION_CODE:-1}" >> "$GITHUB_OUTPUT"
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest
+
+      - name: Check whether release signing secrets are configured
+        id: signing
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASS" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASS" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and verify signed release APK
+        if: steps.signing.outputs.configured == 'true'
+        id: build_release
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="${RUNNER_TEMP}/release.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_FILE"
+          chmod 600 "$KEYSTORE_FILE"
+
+          ANDROID_KEYSTORE_PATH="$KEYSTORE_FILE" ./gradlew assembleRelease
+
+          APK_SRC="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_SRC" ]; then
+            echo "Expected signed release APK at $APK_SRC was not produced." >&2
+            exit 1
+          fi
+
+          APKSIGNER=$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -n1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found in Android SDK build-tools." >&2
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose "$APK_SRC"
+
+          mkdir -p dist
+          OUT_NAME="gunnies-ballistics-v${{ steps.version.outputs.name }}-release.apk"
+          cp "$APK_SRC" "dist/${OUT_NAME}"
+          (cd dist && sha256sum "${OUT_NAME}" > "${OUT_NAME}.sha256")
+          rm -f "$KEYSTORE_FILE"
+
+          echo "apk_path=dist/${OUT_NAME}" >> "$GITHUB_OUTPUT"
+          echo "sha_path=dist/${OUT_NAME}.sha256" >> "$GITHUB_OUTPUT"
+          echo "apk_name=${OUT_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build debug APK (fallback when release signing secrets are not configured)
+        if: steps.signing.outputs.configured != 'true'
+        id: build_debug
+        shell: bash
+        run: |
+          ./gradlew assembleDebug
+          mkdir -p dist
+          OUT_NAME="gunnies-ballistics-v${{ steps.version.outputs.name }}-debug.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/${OUT_NAME}"
+          (cd dist && sha256sum "${OUT_NAME}" > "${OUT_NAME}.sha256")
+
+          echo "apk_path=dist/${OUT_NAME}" >> "$GITHUB_OUTPUT"
+          echo "sha_path=dist/${OUT_NAME}.sha256" >> "$GITHUB_OUTPUT"
+          echo "apk_name=${OUT_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gunnies-ballistics-apk
+          path: dist/*
+          retention-days: 30
+
+      - name: Publish GitHub Release (signed release APK)
+        if: >-
+          steps.signing.outputs.configured == 'true' &&
+          (startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == 'true')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.release_tag != '' && inputs.release_tag || format('v{0}', steps.version.outputs.name)) }}
+          name: Gunnies Ballistics v${{ steps.version.outputs.name }}
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ### Signed Android Release APK (`v${{ steps.version.outputs.name }}`)
+            Verified with `apksigner verify` during CI build.
+
+            1. Download `${{ steps.build_release.outputs.apk_name }}` on your Android device (Android 8.0+).
+            2. Tap the downloaded APK in your **Files** app and allow **Install unknown apps** if prompted.
+            3. Future signed releases signed with the same release key install directly over this version while keeping your saved arsenal, stage cards, and logs.
+          files: |
+            ${{ steps.build_release.outputs.apk_path }}
+            ${{ steps.build_release.outputs.sha_path }}
+
+      - name: Publish GitHub Pre-Release (debug-signed test APK — signing secrets not yet configured)
+        if: >-
+          steps.signing.outputs.configured != 'true' &&
+          (startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == 'true')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.release_tag != '' && inputs.release_tag || format('v{0}-debug', steps.version.outputs.name)) }}
+          name: Gunnies Ballistics v${{ steps.version.outputs.name }} (Debug Test Build)
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            > **Debug Test Build (Not Release-Signed):** Repository release signing secrets are not yet configured, so this pre-release attaches a debug-signed APK (`${{ steps.build_debug.outputs.apk_name }}`).
+            >
+            > Because CI debug builds use a runner-generated debug keystore, updating from an earlier debug build may require exporting your backup first (**Settings → Arsenal Backup → Export (.json)**), uninstalling the previous build, installing the new APK, and importing your JSON backup.
+            >
+            > Maintainers: configure `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` in repository Secrets to publish verified signed release APKs automatically.
+          files: |
+            ${{ steps.build_debug.outputs.apk_path }}
+            ${{ steps.build_debug.outputs.sha_path }}

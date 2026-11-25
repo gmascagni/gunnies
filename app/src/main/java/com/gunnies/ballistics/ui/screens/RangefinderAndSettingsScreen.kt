@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Share
@@ -796,6 +797,7 @@ fun PreferencesScreen(
     val prefs = uiState.preferences
     var pendingImport by remember { mutableStateOf<Pair<String, ArsenalBackup>?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
+    var showModelGuide by rememberSaveable { mutableStateOf(false) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -862,6 +864,7 @@ fun PreferencesScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     BallisticUnitsCard(prefs = prefs, viewModel = viewModel)
+                    BallisticModelAboutCard(onOpenFullGuide = { showModelGuide = true })
                     Spacer(Modifier.height(12.dp))
                 }
             }
@@ -882,9 +885,14 @@ fun PreferencesScreen(
                     )
                 }
                 item { BallisticUnitsCard(prefs = prefs, viewModel = viewModel) }
+                item { BallisticModelAboutCard(onOpenFullGuide = { showModelGuide = true }) }
                 item { Spacer(Modifier.height(16.dp)) }
             }
         }
+    }
+
+    if (showModelGuide) {
+        BallisticModelGuideDialog(onDismiss = { showModelGuide = false })
     }
 
     pendingImport?.let { (rawJson, preview) ->
@@ -1197,5 +1205,122 @@ private fun SettingsToggleRow(
             )
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun BallisticModelAboutCard(
+    onOpenFullGuide: () -> Unit
+) {
+    val context = LocalContext.current
+    val versionName = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "1.0.0"
+    }
+
+    SettingsCard(title = "ABOUT & BALLISTIC MODEL (3-DOF+)") {
+        Text(
+            text = "Gunnies Ballistics v$versionName",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = "Gunnies uses a 3-DOF+ point-mass trajectory solver: it integrates 3D bullet motion (downrange, drop, and lateral drift) at 1 ms RK4 steps using standard BRL/JBM G1 or G7 drag tables, plus optional empirical corrections for Spin Drift, Aerodynamic Jump, Coriolis, velocity-banded BCs, and transonic/subsonic Drop Scale Factor (DSF).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = "Key notes: Coriolis activates only after GPS latitude is synced via Weather → Sync GPS. Spin Drift and Aero Jump apply in Rifle mode when barrel twist direction is set. DSF scales vertical drop (primarily at Mach ≤ 1.20) without altering wind drift or velocity.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedButton(
+            onClick = onOpenFullGuide,
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.small
+        ) {
+            Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Read Full Ballistic Model & Limitations")
+        }
+    }
+}
+
+@Composable
+private fun BallisticModelGuideDialog(
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("How the 3-DOF+ Solver Works")
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ModelSection(
+                    heading = "What \"3-DOF+\" Means",
+                    body = "A 3-DOF (three degrees of freedom) solver tracks the bullet's 3D position and velocity in 0.001-second RK4 steps under gravity, air drag, and 3D wind. The \"+\" means Gunnies layers rotational and Earth-frame effects—Spin Drift, Aerodynamic Jump, Coriolis, stepped Multi-BC, and Drop Scale Factor—on top of the point-mass trajectory rather than simulating full 6-DOF bullet pitch and yaw moments."
+                )
+                ModelSection(
+                    heading = "Drag Models & Velocity-Banded BC",
+                    body = "Uses standard BRL/JBM G1 (79 Mach/Cd points) and G7 (80 Mach/Cd points) curves from Mach 0.00 to 5.00 with linear interpolation. Loads can use a single BC or up to 5 velocity-banded BCs that blend linearly over ±20 fps across each velocity boundary."
+                )
+                ModelSection(
+                    heading = "Atmosphere, Inclination & Wind",
+                    body = "Computes humid ICAO air density, density altitude, and humidity-adjusted speed of sound from temperature, humidity, and station pressure (or sea-level pressure + altitude). Adjusts muzzle velocity for powder temperature sensitivity (fps/°F) and suppressor shift. Inclined shots decompose both gravity and wind into the tilted line-of-sight frame (±75° in solver; ±60° via phone inclinometer). Wind supports Single Wind or 3-Zone Wind (Near 0–33%, Mid 33–66%, Far 66–100%) plus Wind Gust Bracket."
+                )
+                ModelSection(
+                    heading = "When Optional Corrections Apply",
+                    body = "• Spin Drift: Rifle mode with Left or Right barrel twist and barrel twist > 0 (Miller stability factor Sg + Litz empirical drift).\n" +
+                        "• Aerodynamic Jump: Rifle mode with Left or Right twist, computed from Near-zone crosswind and Sg.\n" +
+                        "• Coriolis (horizontal + Eötvös vertical): Rifle mode only after GPS latitude is populated via Weather → Sync GPS, combined with your target bearing.\n" +
+                        "• Two-Stage Truing: Stage 1 trues Muzzle Velocity from observed supersonic drop; Stage 2 locks MV and solves Drop Scale Factor (DSF) at Mach ≤ 1.20 (up to 6 Mach nodes)."
+                )
+                ModelSection(
+                    heading = "Known Limitations",
+                    body = "• Not a 6-DOF rigid-body or custom Doppler radar (CDM) solver; accuracy depends on accurate inputs and field truing.\n" +
+                        "• Zero angle is solved at calm wind (0 mph) under your scope's zero atmosphere without applying DSF.\n" +
+                        "• DSF scales vertical drop after integration and does not alter wind drift, remaining velocity, or time of flight.\n" +
+                        "• On DOPE Range Cards, 3-Zone Wind splits Near/Mid/Far thirds across the card's maximum distance.\n" +
+                        "• If bullet length is left blank, gyroscopic stability (Sg) uses a caliber/weight estimate.\n" +
+                        "• Sync GPS Weather requires GPS + internet (saved defaults and manual weather work offline). Optional Bushnell LBC1800 BLE sync sends only the primary BC and range-weighted average wind, and the rangefinder's onboard solver caps at 800 yards."
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
+private fun ModelSection(
+    heading: String,
+    body: String
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            text = heading,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = body,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

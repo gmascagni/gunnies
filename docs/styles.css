@@ -1038,6 +1038,138 @@ button {
   color: var(--text-muted);
 }
 
+.install-note {
+  margin: 1rem 0 0 !important;
+  font-size: 0.82rem;
+  color: var(--text-muted) !important;
+}
+
+.install-note code,
+.accordion-body code {
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+}
+
+.inline-link {
+  color: var(--amber);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ==========================================================================
+   DISCLOSURE ACCORDION (modern-web-guidance: accordion)
+   ========================================================================== */
+.accordion {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.install-accordion {
+  margin-top: 1.5rem;
+}
+
+.accordion > details {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: clip;
+  transition: border-color 0.2s ease;
+}
+
+.accordion > details[open] {
+  border-color: var(--border-accent);
+}
+
+.accordion > details > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.05rem 1.25rem;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.accordion > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.accordion > details > summary::before {
+  content: "";
+  inline-size: 0.65rem;
+  block-size: 0.65rem;
+  flex-shrink: 0;
+  border-inline-end: 2px solid var(--amber);
+  border-block-end: 2px solid var(--amber);
+  transform-origin: center;
+  rotate: -45deg;
+}
+
+.accordion > details[open] > summary::before {
+  rotate: 45deg;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .accordion > details > summary::before {
+    transition: rotate 0.2s ease;
+  }
+}
+
+.accordion > details::details-content {
+  interpolate-size: allow-keywords;
+  overflow: clip;
+  contain: layout;
+}
+
+.accordion > details:not([open])::details-content {
+  block-size: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .accordion > details::details-content {
+    transition-property: block-size, content-visibility, display;
+    transition-duration: 0.28s;
+    transition-timing-function: ease-in-out;
+    transition-behavior: allow-discrete;
+  }
+}
+
+.accordion-body {
+  padding: 0 1.25rem 1.2rem 2.65rem;
+  color: var(--text-secondary);
+  font-size: 0.93rem;
+}
+
+.accordion-body p {
+  margin: 0 0 0.7rem;
+}
+
+.accordion-body p:last-child,
+.accordion-body ul:last-child,
+.accordion-body ol:last-child {
+  margin-bottom: 0;
+}
+
+.accordion-body ul,
+.accordion-body ol {
+  margin: 0;
+  padding-inline-start: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.accordion-body strong {
+  color: var(--text-primary);
+}
+
 .site-footer {
   padding-block: 1.75rem;
   border-top: 1px solid var(--border-subtle);
