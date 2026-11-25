@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "arken-vpr-mil",
+  "name": "Arken VPR MIL (FFP)",
+  "focalPlane": "FFP",
+  "unit": "MRAD",
+  "stadiaStyle": "CHRISTMAS_TREE",
+  "defaultZoom": 10.0,
+  "minZoom": 4.0,
+  "maxZoom": 25.0,
+  "maxSubtension": 10.0,
+  "majorTickStep": 1.0,
+  "minorTickStep": 0.2,
+  "treeStartHold": 1.0,
+  "treeMaxHold": 10.0,
+  "centerDotSize": 0.05,
+  "outerRingDiameter": 0.0,
+  "illuminatedByDefault": true,
+  "author": "Gunnies Ballistics",
+  "notes": "0.2 MRAD subtensions with floating center dot and Christmas-tree wind holds."
+}

@@ -62,6 +62,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.gunnies.ballistics.data.ReticleDefinitionCodec
 import com.gunnies.ballistics.model.BallisticSolution
 import com.gunnies.ballistics.model.ReticleType
 import com.gunnies.ballistics.model.ScopeSetup
@@ -99,28 +100,18 @@ fun ReticleViewCard(
     onChangeScopeReticle: (ReticleType) -> Unit
 ) {
     val reticle = scope.reticleType
+    val reticleDef = remember(reticle) { ReticleDefinitionCodec.forReticleType(reticle) }
     var expanded by rememberSaveable(initiallyExpanded) { mutableStateOf(initiallyExpanded) }
-    var illuminated by remember(reticle) {
-        mutableStateOf(
-            reticle == ReticleType.RED_DOT_CIRCLE_65 ||
-                reticle == ReticleType.EOTECH_HWS_68 ||
-                reticle == ReticleType.ARKEN_VPR_MIL
-        )
-    }
+    var illuminated by remember(reticleDef) { mutableStateOf(reticleDef.illuminatedByDefault) }
     var dialElevationMode by remember { mutableStateOf(false) }
     var targetSize by remember { mutableStateOf(ReticleTargetSize.PLATE_10) }
     var showReticlePicker by remember { mutableStateOf(false) }
 
-    var zoom by remember(scope.id, reticle) {
+    var zoom by remember(scope.id, reticleDef) {
         mutableFloatStateOf(
-            when (reticle) {
-                ReticleType.ARKEN_VPR_MIL -> 10f
-                ReticleType.PA_ARC2_MOA, ReticleType.PA_ACSS_RGRID -> 10f
-                ReticleType.RED_DOT_CIRCLE_65 -> 1f
-                ReticleType.EOTECH_HWS_68 -> if (scope.name.contains("G33", ignoreCase = true) || scope.scopeModel.contains("G33", ignoreCase = true)) 3f else 1f
-                ReticleType.HANDGUN_THREE_DOT -> 1f
-                ReticleType.SIMPLE_DUPLEX -> 6f
-            }
+            if (reticle == ReticleType.EOTECH_HWS_68 &&
+                (scope.name.contains("G33", ignoreCase = true) || scope.scopeModel.contains("G33", ignoreCase = true))
+            ) 3f else reticleDef.defaultZoom
         )
     }
 
@@ -163,7 +154,7 @@ fun ReticleViewCard(
                     Spacer(Modifier.width(6.dp))
                     Column {
                         Text(
-                            text = "OPTICAL RETICLE • ${reticle.label.uppercase(Locale.US)}",
+                            text = "${reticleDef.focalPlane.label} RETICLE • ${reticle.label.uppercase(Locale.US)}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )

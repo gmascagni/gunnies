@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "generic-mil-tree-02",
+  "name": "Generic 0.2 MIL Tree (FFP)",
+  "focalPlane": "FFP",
+  "unit": "MRAD",
+  "stadiaStyle": "CHRISTMAS_TREE",
+  "defaultZoom": 12.0,
+  "minZoom": 5.0,
+  "maxZoom": 25.0,
+  "maxSubtension": 10.0,
+  "majorTickStep": 1.0,
+  "minorTickStep": 0.2,
+  "treeStartHold": 1.0,
+  "treeMaxHold": 10.0,
+  "centerDotSize": 0.05,
+  "outerRingDiameter": 0.0,
+  "illuminatedByDefault": false,
+  "author": "Community Example",
+  "notes": "Data-driven JSON reticle example. Drop additional *.json files in app/src/main/assets/reticles/."
+}
