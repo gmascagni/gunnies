@@ -1,5 +1,6 @@
 package com.gunnies.ballistics.engine
 
+import com.gunnies.ballistics.model.AngularUnit
 import com.gunnies.ballistics.model.Atmosphere
 import com.gunnies.ballistics.model.BallisticSolution
 import com.gunnies.ballistics.model.BcBand
@@ -7,8 +8,13 @@ import com.gunnies.ballistics.model.CustomDragCurve
 import com.gunnies.ballistics.model.DistanceUnit
 import com.gunnies.ballistics.model.DragModel
 import com.gunnies.ballistics.model.DsfPoint
+import com.gunnies.ballistics.model.MultiPointTruingResult
 import com.gunnies.ballistics.model.RifleProfile
+import com.gunnies.ballistics.model.SessionLogEntry
 import com.gunnies.ballistics.model.StageTarget
+import com.gunnies.ballistics.model.TallTargetResult
+import com.gunnies.ballistics.model.TruingObservation
+import com.gunnies.ballistics.model.TruingPointResidual
 import com.gunnies.ballistics.model.TwistDirection
 import com.gunnies.ballistics.model.WeaponMode
 import com.gunnies.ballistics.model.WindMode
@@ -665,6 +671,336 @@ object BallisticEngine {
         }
         val solved = 0.5 * (lowDsf + highDsf)
         return DsfPoint(mach = targetMach, dropScaleFactor = (solved * 1000.0).roundToInt() / 1000.0)
+    }
+
+    /**
+     * Converts a logged range session / cold-bore shot into a [TruingObservation] using the shot's
+     * recorded range, actual elevation, inclination, and atmospheric snapshot (temp & station pressure).
+     */
+    fun logEntryToTruingObservation(
+        entry: SessionLogEntry,
+        fallbackAtmosphere: Atmosphere
+    ): TruingObservation {
+        val obsMoa = if (entry.angularUnit == AngularUnit.MRAD) {
+            entry.actualElevation * 3.43774677
+        } else {
+            entry.actualElevation
+        }
+        val shotAtmo = fallbackAtmosphere.copy(
+            temperatureF = entry.temperatureF,
+            pressureInHg = entry.stationPressureInHg,
+            pressureIsStation = true,
+            windSpeedMph = entry.windSpeedMph,
+            windDirectionDeg = entry.windDirectionDeg,
+            windProfile = null
+        )
+        val tag = if (entry.isColdBore) "Cold Bore" else "Log"
+        return TruingObservation(
+            rangeYards = entry.targetRangeYards,
+            observedElevationMoa = obsMoa,
+            inclinationDeg = entry.inclinationDeg,
+            atmosphere = shotAtmo,
+            label = "$tag ${entry.targetRangeYards.roundToInt()} yd",
+            isColdBore = entry.isColdBore
+        )
+    }
+
+    /**
+     * Multi-Point Ballistic Calibration — damped Levenberg-Marquardt least-squares fitter.
+     *
+     * Solves for Muzzle Velocity (MV) alone (1-point or when [fitBc] is false / Custom Cd active)
+     * or jointly fits **MV and BC** (scaling single BC or all Multi-BC bands proportionally) across
+     * multiple observed drops at different distances, returning per-point residuals and RMS error.
+     */
+    fun fitMvAndBc(
+        profile: RifleProfile,
+        atmosphere: Atmosphere,
+        observations: List<TruingObservation>,
+        fitBc: Boolean = true,
+        options: SolverOptions = SolverOptions()
+    ): MultiPointTruingResult? {
+        val validObs = observations
+            .filter { it.rangeYards > profile.zeroRangeYards + 10.0 && it.observedElevationMoa > 0.1 }
+            .sortedBy { it.rangeYards }
+        if (validObs.isEmpty()) return null
+
+        val n = validObs.size
+        val minRange = validObs.first().rangeYards
+        val maxRange = validObs.last().rangeYards
+        val rangeSpread = maxRange - minRange
+        val warnings = mutableListOf<String>()
+
+        val canFitBc = fitBc && n >= 2 && rangeSpread >= 25.0 && !profile.usesCustomDragCurve()
+        if (fitBc && profile.usesCustomDragCurve()) {
+            warnings += "Custom Cd(Mach) curve active — fitted MV only while preserving custom drag table."
+        } else if (fitBc && n >= 2 && rangeSpread < 25.0) {
+            warnings += "Distances are within 25 yd of each other — fitted MV only. Add a farther range to separate BC."
+        } else if (canFitBc && rangeSpread < 150.0) {
+            warnings += "Range spread is ${rangeSpread.roundToInt()} yd; wider distance separation improves MV vs. BC accuracy."
+        }
+        if (validObs.any { it.isColdBore }) {
+            warnings += "Includes Cold Bore shot(s) — verify cold-bore POI shift does not bias MV/BC."
+        }
+
+        val baseMv = profile.muzzleVelocityFps.coerceIn(350.0, 5000.0)
+        val minMv = (baseMv * 0.65).coerceAtLeast(350.0)
+        val maxMv = (baseMv * 1.40).coerceAtMost(5000.0)
+        val basePrimaryBc = profile.primaryBc().coerceIn(0.02, 2.0)
+        val minBcScale = (0.02 / basePrimaryBc).coerceAtLeast(0.65)
+        val maxBcScale = (2.0 / basePrimaryBc).coerceAtMost(1.35)
+
+        fun buildCandidate(mv: Double, bcScale: Double): RifleProfile {
+            val scaledPrimary = (profile.ballisticCoefficient * bcScale).coerceIn(0.02, 2.0)
+            val scaledBands = profile.bcBands.map { band ->
+                band.copy(bc = (band.bc * bcScale).coerceIn(0.02, 2.0))
+            }
+            return profile.copy(
+                muzzleVelocityFps = mv,
+                ballisticCoefficient = scaledPrimary,
+                bcBands = scaledBands
+            )
+        }
+
+        fun evalSolutions(mv: Double, bcScale: Double): List<BallisticSolution> {
+            val cand = buildCandidate(mv, bcScale)
+            val zeroAngle = computeZeroAngleRad(cand)
+            return validObs.map { obs ->
+                solve(
+                    profile = cand,
+                    atmosphere = obs.atmosphere ?: atmosphere,
+                    rangeYards = obs.rangeYards,
+                    inclinationDeg = obs.inclinationDeg,
+                    cachedZeroAngleRad = zeroAngle,
+                    options = options
+                )
+            }
+        }
+
+        fun evalResiduals(mv: Double, bcScale: Double, out: DoubleArray): Double {
+            val cand = buildCandidate(mv, bcScale)
+            val zeroAngle = computeZeroAngleRad(cand)
+            var sumSq = 0.0
+            for (i in 0 until n) {
+                val obs = validObs[i]
+                val sol = solve(
+                    profile = cand,
+                    atmosphere = obs.atmosphere ?: atmosphere,
+                    rangeYards = obs.rangeYards,
+                    inclinationDeg = obs.inclinationDeg,
+                    cachedZeroAngleRad = zeroAngle,
+                    options = options
+                )
+                val r = sol.elevationMoa - obs.observedElevationMoa
+                out[i] = r
+                sumSq += r * r
+            }
+            return 0.5 * sumSq
+        }
+
+        val beforeSols = evalSolutions(baseMv, 1.0)
+        val beforeRms = sqrt(
+            validObs.indices.sumOf { i ->
+                val d = beforeSols[i].elevationMoa - validObs[i].observedElevationMoa
+                d * d
+            } / n
+        )
+
+        var curMv = baseMv
+        var curScale = 1.0
+        val res = DoubleArray(n)
+        val resPlus = DoubleArray(n)
+        val resMinus = DoubleArray(n)
+        val trialRes = DoubleArray(n)
+        val jMv = DoubleArray(n)
+        val jBc = DoubleArray(n)
+
+        var curCost = evalResiduals(curMv, curScale, res)
+
+        // Stage A: Quick 1D damped Gauss-Newton on MV (stabilizes initial guess before 2D fit)
+        var lambda1d = 1e-3
+        val mvIters = if (canFitBc) 5 else 16
+        for (iter in 0 until mvIters) {
+            val rms = sqrt((2.0 * curCost) / n)
+            if (rms < 0.002) break
+            val dMv = (curMv * 0.002).coerceAtLeast(1.0)
+            evalResiduals((curMv + dMv).coerceAtMost(maxMv), curScale, resPlus)
+            evalResiduals((curMv - dMv).coerceAtLeast(minMv), curScale, resMinus)
+            val span = (curMv + dMv).coerceAtMost(maxMv) - (curMv - dMv).coerceAtLeast(minMv)
+            if (span < 1e-6) break
+
+            var jtJ = 0.0
+            var jtR = 0.0
+            for (i in 0 until n) {
+                val g = (resPlus[i] - resMinus[i]) / span
+                jtJ += g * g
+                jtR += g * res[i]
+            }
+            if (jtJ < 1e-12) break
+            val step = -jtR / (jtJ + lambda1d * jtJ.coerceAtLeast(1e-6))
+            val nextMv = (curMv + step.coerceIn(-400.0, 400.0)).coerceIn(minMv, maxMv)
+            val nextCost = evalResiduals(nextMv, curScale, trialRes)
+            if (nextCost < curCost) {
+                curMv = nextMv
+                curCost = nextCost
+                System.arraycopy(trialRes, 0, res, 0, n)
+                lambda1d = (lambda1d * 0.3).coerceAtLeast(1e-7)
+                if (abs(step) < 0.05) break
+            } else {
+                lambda1d = (lambda1d * 5.0).coerceAtMost(1e5)
+            }
+        }
+
+        // Stage B: 2D damped Levenberg-Marquardt on (MV, BC scale)
+        if (canFitBc) {
+            var lambda = 1e-3
+            for (iter in 0 until 20) {
+                val rms = sqrt((2.0 * curCost) / n)
+                if (rms < 0.002) break
+
+                val dMv = (curMv * 0.002).coerceAtLeast(1.0)
+                val mvHi = (curMv + dMv).coerceAtMost(maxMv)
+                val mvLo = (curMv - dMv).coerceAtLeast(minMv)
+                val mvSpan = mvHi - mvLo
+                if (mvSpan < 1e-6) break
+
+                evalResiduals(mvHi, curScale, resPlus)
+                evalResiduals(mvLo, curScale, resMinus)
+                for (i in 0 until n) {
+                    jMv[i] = (resPlus[i] - resMinus[i]) / mvSpan
+                }
+
+                val dSc = 0.002
+                val scHi = (curScale + dSc).coerceAtMost(maxBcScale)
+                val scLo = (curScale - dSc).coerceAtLeast(minBcScale)
+                val scSpan = scHi - scLo
+                if (scSpan < 1e-6) break
+
+                evalResiduals(curMv, scHi, resPlus)
+                evalResiduals(curMv, scLo, resMinus)
+                for (i in 0 until n) {
+                    jBc[i] = (resPlus[i] - resMinus[i]) / scSpan
+                }
+
+                // Scale columns so MV (~1000) and bcScale (~1) are well-conditioned
+                var a00 = 0.0; var a01 = 0.0; var a11 = 0.0
+                var g0 = 0.0; var g1 = 0.0
+                for (i in 0 until n) {
+                    val c0 = jMv[i]
+                    val c1 = jBc[i]
+                    a00 += c0 * c0
+                    a01 += c0 * c1
+                    a11 += c1 * c1
+                    g0 += c0 * res[i]
+                    g1 += c1 * res[i]
+                }
+
+                val d00 = a00 + lambda * a00.coerceAtLeast(1e-9)
+                val d11 = a11 + lambda * a11.coerceAtLeast(1e-9)
+                val det = d00 * d11 - a01 * a01
+                if (abs(det) < 1e-18) {
+                    lambda = (lambda * 10.0).coerceAtMost(1e6)
+                    continue
+                }
+
+                val stepMv = (-(d11 * g0 - a01 * g1) / det).coerceIn(-250.0, 250.0)
+                val stepSc = (-(-a01 * g0 + d00 * g1) / det).coerceIn(-0.12, 0.12)
+
+                val nextMv = (curMv + stepMv).coerceIn(minMv, maxMv)
+                val nextSc = (curScale + stepSc).coerceIn(minBcScale, maxBcScale)
+                val nextCost = evalResiduals(nextMv, nextSc, trialRes)
+
+                if (nextCost < curCost) {
+                    curMv = nextMv
+                    curScale = nextSc
+                    curCost = nextCost
+                    System.arraycopy(trialRes, 0, res, 0, n)
+                    lambda = (lambda * 0.35).coerceAtLeast(1e-7)
+                    if (abs(stepMv) < 0.05 && abs(stepSc) < 0.0002) break
+                } else {
+                    lambda = (lambda * 5.0).coerceAtMost(1e6)
+                }
+            }
+        }
+
+        val roundedMv = (curMv * 10.0).roundToInt() / 10.0
+        val roundedScale = if (canFitBc) (curScale * 10000.0).roundToInt() / 10000.0 else 1.0
+        val finalProfile = buildCandidate(roundedMv, roundedScale)
+        val afterSols = evalSolutions(roundedMv, roundedScale)
+
+        val residualItems = validObs.indices.map { i ->
+            val obs = validObs[i]
+            val beforePred = beforeSols[i].elevationMoa
+            val afterPred = afterSols[i].elevationMoa
+            TruingPointResidual(
+                rangeYards = obs.rangeYards,
+                observedMoa = obs.observedElevationMoa,
+                predictedBeforeMoa = beforePred,
+                predictedAfterMoa = afterPred,
+                residualBeforeMoa = beforePred - obs.observedElevationMoa,
+                residualAfterMoa = afterPred - obs.observedElevationMoa,
+                mach = afterSols[i].mach,
+                label = obs.label,
+                isColdBore = obs.isColdBore
+            )
+        }
+
+        val afterRms = sqrt(residualItems.sumOf { it.residualAfterMoa * it.residualAfterMoa } / n)
+        val maxAbsErr = residualItems.maxOf { abs(it.residualAfterMoa) }
+
+        return MultiPointTruingResult(
+            fittedMvFps = roundedMv,
+            fittedBc = (finalProfile.primaryBc() * 1000.0).roundToInt() / 1000.0,
+            bcScaleFactor = roundedScale,
+            fittedBcBands = finalProfile.bcBands.map {
+                it.copy(bc = (it.bc * 1000.0).roundToInt() / 1000.0)
+            },
+            fittedBothMvAndBc = canFitBc,
+            beforeRmsErrorMoa = beforeRms,
+            rmsErrorMoa = afterRms,
+            maxAbsErrorMoa = maxAbsErr,
+            residuals = residualItems,
+            warnings = warnings
+        )
+    }
+
+    /**
+     * Tall-Target Optic Tracking Calibration (Elevation or Windage Sight Scale Factor).
+     *
+     * Formula:
+     * - Expected shift (MOA): `dialed * (distanceYards / 100.0) * 1.04719755` inches
+     * - Expected shift (MRAD): `dialed * (distanceYards * 36.0 / 1000.0)` inches
+     * - `SSF = expectedShiftInches / measuredShiftInches`
+     *   (If a scope under-tracks by 2%, `measured / expected = 0.98`, so `SSF = 1.020` multiplies
+     *   raw solver holds upward to compensate.)
+     */
+    fun computeTallTargetCalibration(
+        distanceYards: Double,
+        dialedAmount: Double,
+        measuredShiftInches: Double,
+        angularUnit: AngularUnit
+    ): TallTargetResult? {
+        if (distanceYards < 10.0 || distanceYards > 1000.0) return null
+        if (dialedAmount <= 0.1 || measuredShiftInches <= 0.1) return null
+
+        val expectedInches = when (angularUnit) {
+            AngularUnit.MRAD -> dialedAmount * (distanceYards * 36.0 / 1000.0)
+            else -> dialedAmount * (distanceYards / 100.0) * 1.0471975512
+        }
+        val rawSsf = expectedInches / measuredShiftInches
+        val roundedSsf = (rawSsf * 1000.0).roundToInt() / 1000.0
+        val trackingErrPct = ((measuredShiftInches / expectedInches) - 1.0) * 100.0
+        val isValid = roundedSsf in 0.800..1.200
+
+        return TallTargetResult(
+            distanceYards = distanceYards,
+            dialedAmount = dialedAmount,
+            angularUnit = angularUnit,
+            expectedShiftInches = expectedInches,
+            measuredShiftInches = measuredShiftInches,
+            scaleFactor = roundedSsf,
+            trackingErrorPercent = trackingErrPct,
+            isWithinValidRange = isValid
+        )
     }
 
     private fun integrateMultiRange(

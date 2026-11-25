@@ -25,13 +25,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.MyLocation
@@ -46,6 +51,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -64,6 +70,7 @@ import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -92,7 +99,12 @@ import com.gunnies.ballistics.data.UnitFormatters
 import com.gunnies.ballistics.engine.BallisticEngine
 import com.gunnies.ballistics.model.AngularUnit
 import com.gunnies.ballistics.model.AppThemeMode
+import com.gunnies.ballistics.model.Atmosphere
 import com.gunnies.ballistics.model.BallisticSolution
+import com.gunnies.ballistics.model.MultiPointTruingResult
+import com.gunnies.ballistics.model.TruingObservation
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.gunnies.ballistics.model.DistanceUnit
 import com.gunnies.ballistics.model.DsfPoint
 import com.gunnies.ballistics.model.FirearmCategory
@@ -324,14 +336,14 @@ fun SolverScreen(
         )
     }
 
-    // Two-Stage Ballistic Calibration / Truing Dialog (Supersonic MV + Transonic/Subsonic DSF)
+    // Multi-Point MV/BC, Transonic DSF & Tall-Target Optic SSF Calibration Dialog
     if (showCalibrationDialog && sol != null) {
         BallisticCalibrationDialog(
             uiState = uiState,
             currentSolution = sol,
             onDismiss = { showCalibrationDialog = false },
-            onApplyTruedMv = { mv ->
-                viewModel.applyTruedMuzzleVelocity(mv)
+            onApplyMultiPoint = { result ->
+                viewModel.applyMultiPointTruing(result)
                 showCalibrationDialog = false
             },
             onApplyTruedDsf = { point ->
@@ -340,6 +352,10 @@ fun SolverScreen(
             },
             onClearDsf = {
                 viewModel.clearActiveAmmoDsf()
+            },
+            onApplyScopeSsf = { elevSsf, windSsf ->
+                viewModel.applyScopeSsf(elevationSsf = elevSsf, windageSsf = windSsf)
+                showCalibrationDialog = false
             }
         )
     }
@@ -1458,180 +1474,637 @@ private fun DirectRangeDialog(
     )
 }
 
+private data class EditableTruingRow(
+    val id: String,
+    val rangeText: String,
+    val holdText: String,
+    val inclinationDeg: Double = 0.0,
+    val atmosphere: Atmosphere? = null,
+    val label: String = "Manual",
+    val isColdBore: Boolean = false
+)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BallisticCalibrationDialog(
     uiState: AppUiState,
     currentSolution: BallisticSolution,
     onDismiss: () -> Unit,
-    onApplyTruedMv: (Double) -> Unit,
+    onApplyMultiPoint: (MultiPointTruingResult) -> Unit,
     onApplyTruedDsf: (DsfPoint) -> Unit,
-    onClearDsf: () -> Unit
+    onClearDsf: () -> Unit,
+    onApplyScopeSsf: (elevationSsf: Double?, windageSsf: Double?) -> Unit
 ) {
     val prefs = uiState.preferences
-    val unitLabel = if (prefs.angularUnit == AngularUnit.MRAD) "MRAD" else "MOA"
-    val predictedHold = if (prefs.angularUnit == AngularUnit.MRAD) currentSolution.elevationMrad else currentSolution.elevationMoa
+    val isMrad = prefs.angularUnit == AngularUnit.MRAD
+    val unitLabel = if (isMrad) "MRAD" else "MOA"
+    val moaFactor = if (isMrad) 3.43774677 else 1.0
+    val predictedHold = if (isMrad) currentSolution.elevationMrad else currentSolution.elevationMoa
 
-    var distText by remember { mutableStateOf(currentSolution.rangeYards.roundToInt().toString()) }
-    var observedText by remember { mutableStateOf(String.format(Locale.US, "%.2f", abs(predictedHold))) }
-    var stageTab by remember {
-        mutableIntStateOf(if (currentSolution.mach > BallisticEngine.TRANSONIC_MACH_GATE) 0 else 1)
-    }
+    // Tab 0 = MV/BC Multi-Point Fit, Tab 1 = DSF (<=M1.2), Tab 2 = Tall Target (Optic SSF)
+    var stageTab by remember { mutableIntStateOf(0) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    val rangeYd = distText.toDoubleOrNull() ?: currentSolution.rangeYards
-    val obsVal = observedText.toDoubleOrNull()
-    val obsMoa = if (obsVal != null) {
-        if (prefs.angularUnit == AngularUnit.MRAD) obsVal * 3.43774677 else obsVal
-    } else null
+    // --- Tab 0: Multi-Point MV + BC state ---
+    var fitBcToggle by remember { mutableStateOf(true) }
+    var showLogPicker by remember { mutableStateOf(false) }
+    var rows by remember {
+        mutableStateOf(
+            listOf(
+                EditableTruingRow(
+                    id = "pt-0",
+                    rangeText = currentSolution.rangeYards.roundToInt().toString(),
+                    holdText = String.format(Locale.US, "%.2f", abs(predictedHold)),
+                    inclinationDeg = uiState.solverInput.inclinationDeg,
+                    label = "HUD"
+                )
+            )
+        )
+    }
 
-    val previewSol = remember(rangeYd, uiState.activeProfile, uiState.solverInput.atmosphere, uiState.solverInput.inclinationDeg) {
+    val matchingLogs = remember(uiState.sessionLogs, uiState.activeFirearm.id, uiState.activeAmmo.id) {
+        uiState.sessionLogs.filter { entry ->
+            entry.firearmId == uiState.activeFirearm.id &&
+                entry.ammoId == uiState.activeAmmo.id &&
+                entry.targetRangeYards > uiState.activeScope.zeroRangeYards + 10.0 &&
+                entry.actualElevation > 0.05
+        }.take(12)
+    }
+
+    val parsedObservations = remember(rows, moaFactor) {
+        rows.mapNotNull { row ->
+            val r = row.rangeText.trim().toDoubleOrNull()
+            val h = row.holdText.trim().toDoubleOrNull()
+            if (r != null && h != null && r > 10.0 && h > 0.05) {
+                TruingObservation(
+                    rangeYards = r,
+                    observedElevationMoa = h * moaFactor,
+                    inclinationDeg = row.inclinationDeg,
+                    atmosphere = row.atmosphere,
+                    label = row.label,
+                    isColdBore = row.isColdBore
+                )
+            } else null
+        }
+    }
+
+    val solverOptions = remember(prefs.includeSpinDrift, prefs.includeCoriolis, prefs.includeAeroJump) {
+        BallisticEngine.SolverOptions(
+            includeSpinDrift = prefs.includeSpinDrift,
+            includeCoriolis = prefs.includeCoriolis,
+            includeAeroJump = prefs.includeAeroJump
+        )
+    }
+
+    val multiPointResult by produceState<MultiPointTruingResult?>(
+        initialValue = null,
+        stageTab,
+        parsedObservations,
+        fitBcToggle,
+        uiState.activeProfile,
+        uiState.solverInput.atmosphere,
+        solverOptions
+    ) {
+        value = if (stageTab != 0 || parsedObservations.isEmpty()) {
+            null
+        } else {
+            withContext(Dispatchers.Default) {
+                BallisticEngine.fitMvAndBc(
+                    profile = uiState.activeProfile,
+                    atmosphere = uiState.solverInput.atmosphere,
+                    observations = parsedObservations,
+                    fitBc = fitBcToggle,
+                    options = solverOptions
+                )
+            }
+        }
+    }
+
+    // --- Tab 1: DSF state ---
+    var dsfDistText by remember { mutableStateOf(currentSolution.rangeYards.roundToInt().toString()) }
+    var dsfObsText by remember { mutableStateOf(String.format(Locale.US, "%.2f", abs(predictedHold))) }
+    val dsfRangeYd = dsfDistText.toDoubleOrNull() ?: currentSolution.rangeYards
+    val dsfObsMoa = dsfObsText.toDoubleOrNull()?.let { it * moaFactor }
+
+    val dsfPreviewSol = remember(dsfRangeYd, uiState.activeProfile, uiState.solverInput.atmosphere, uiState.solverInput.inclinationDeg) {
         BallisticEngine.solve(
             profile = uiState.activeProfile,
             atmosphere = uiState.solverInput.atmosphere,
-            rangeYards = rangeYd.coerceAtLeast(10.0),
+            rangeYards = dsfRangeYd.coerceAtLeast(10.0),
             inclinationDeg = uiState.solverInput.inclinationDeg
         )
     }
-    val isSupersonicAtTarget = previewSol.mach > BallisticEngine.TRANSONIC_MACH_GATE
-
-    val computedMv = remember(stageTab, rangeYd, obsMoa, uiState.activeProfile, uiState.solverInput.atmosphere) {
-        if (stageTab != 0 || obsMoa == null) null
-        else BallisticEngine.trueMuzzleVelocity(
-            profile = uiState.activeProfile,
-            atmosphere = uiState.solverInput.atmosphere,
-            rangeYards = rangeYd,
-            observedElevationMoa = obsMoa,
-            inclinationDeg = uiState.solverInput.inclinationDeg
-        )
-    }
-
-    val computedDsf = remember(stageTab, rangeYd, obsMoa, uiState.activeProfile, uiState.solverInput.atmosphere) {
-        if (stageTab != 1 || obsMoa == null) null
+    val dsfIsSupersonic = dsfPreviewSol.mach > BallisticEngine.TRANSONIC_MACH_GATE
+    val computedDsf = remember(stageTab, dsfRangeYd, dsfObsMoa, uiState.activeProfile, uiState.solverInput.atmosphere) {
+        if (stageTab != 1 || dsfObsMoa == null) null
         else BallisticEngine.trueDropScaleFactor(
             profile = uiState.activeProfile,
             atmosphere = uiState.solverInput.atmosphere,
-            rangeYards = rangeYd,
-            observedElevationMoa = obsMoa,
+            rangeYards = dsfRangeYd,
+            observedElevationMoa = dsfObsMoa,
             inclinationDeg = uiState.solverInput.inclinationDeg
         )
+    }
+
+    // --- Tab 2: Tall-Target Optic SSF state ---
+    var ttAxisIsWind by remember { mutableStateOf(false) }
+    var ttDistText by remember { mutableStateOf("100") }
+    var ttDialedText by remember { mutableStateOf(if (isMrad) "10.0" else "30.0") }
+    var ttMeasuredInText by remember { mutableStateOf(if (isMrad) "36.00" else "31.42") }
+    val ttResult = remember(stageTab, ttDistText, ttDialedText, ttMeasuredInText, prefs.angularUnit) {
+        if (stageTab != 2) null
+        else {
+            val d = ttDistText.toDoubleOrNull()
+            val dial = ttDialedText.toDoubleOrNull()
+            val meas = ttMeasuredInText.toDoubleOrNull()
+            if (d != null && dial != null && meas != null) {
+                BallisticEngine.computeTallTargetCalibration(d, dial, meas, prefs.angularUnit)
+            } else null
+        }
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Ballistic Calibration / Truing") },
+        title = { Text("Ballistic Calibration") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     SegmentedButton(
                         selected = stageTab == 0,
                         onClick = { stageTab = 0; errorMsg = null },
-                        shape = SegmentedButtonDefaults.itemShape(0, 2)
-                    ) { Text("1: MV (>M1.2)", maxLines = 1) }
+                        shape = SegmentedButtonDefaults.itemShape(0, 3)
+                    ) { Text("MV / BC", maxLines = 1) }
                     SegmentedButton(
                         selected = stageTab == 1,
                         onClick = { stageTab = 1; errorMsg = null },
-                        shape = SegmentedButtonDefaults.itemShape(1, 2)
-                    ) { Text("2: DSF (≤M1.2)", maxLines = 1) }
+                        shape = SegmentedButtonDefaults.itemShape(1, 3)
+                    ) { Text("DSF", maxLines = 1) }
+                    SegmentedButton(
+                        selected = stageTab == 2,
+                        onClick = { stageTab = 2; errorMsg = null },
+                        shape = SegmentedButtonDefaults.itemShape(2, 3)
+                    ) { Text("Tall Target", maxLines = 1) }
                 }
 
-                Text(
-                    text = if (stageTab == 0) {
-                        "Stage 1 (Supersonic): Calibrates Muzzle Velocity for ${uiState.activeAmmo.name}."
-                    } else {
-                        "Stage 2 (Transonic / Subsonic): Locks MV and calibrates Drop Scale Factor (DSF) at Mach ≤ 1.2."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                OutlinedTextField(
-                    value = distText,
-                    onValueChange = { distText = it; errorMsg = null },
-                    label = { Text("Validation Distance (yd)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = observedText,
-                    onValueChange = { observedText = it; errorMsg = null },
-                    label = { Text("Actual Elevation Needed ($unitLabel UP)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                when (stageTab) {
+                    0 -> {
                         Text(
-                            text = String.format(
-                                Locale.US,
-                                "Target Mach: M%.2f (%s) • Current MV: %d fps",
-                                previewSol.mach,
-                                if (isSupersonicAtTarget) "Supersonic" else "Sub/Transonic",
-                                uiState.activeAmmo.muzzleVelocityFps.roundToInt()
-                            ),
-                            style = MaterialTheme.typography.bodySmall
+                            text = "Enter 1+ observed drops for ${uiState.activeAmmo.name}. Use 2+ distances (e.g., 400 & 800 yd) to jointly fit MV and BC.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (stageTab == 0) {
-                            if (!isSupersonicAtTarget) {
-                                Text(
-                                    text = "Tip: Target is ≤ Mach 1.2 — Stage 2 (DSF) is recommended.",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.tertiary
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            FilterChip(
+                                selected = fitBcToggle,
+                                onClick = { fitBcToggle = !fitBcToggle },
+                                label = { Text(if (fitBcToggle) "Fit MV + BC" else "Fit MV Only") }
+                            )
+                            if (matchingLogs.isNotEmpty()) {
+                                FilterChip(
+                                    selected = showLogPicker,
+                                    onClick = { showLogPicker = !showLogPicker },
+                                    leadingIcon = { Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                                    label = { Text("Logbook (${matchingLogs.size})") }
                                 )
                             }
-                            Text(
-                                text = if (computedMv != null) {
-                                    "Trued MV: ${computedMv.roundToInt()} fps (${if (computedMv >= uiState.activeAmmo.muzzleVelocityFps) "+" else ""}${
-                                        (computedMv - uiState.activeAmmo.muzzleVelocityFps).roundToInt()
-                                    } fps)"
-                                } else {
-                                    "Trued MV: Enter a valid hold beyond zero range"
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                                color = if (computedMv != null) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
-                                fontWeight = FontWeight.Bold
-                            )
-                        } else {
-                            Text(
-                                text = when {
-                                    isSupersonicAtTarget -> "Move to a transonic/subsonic range (Mach ≤ 1.2) for DSF calibration."
-                                    computedDsf != null -> String.format(
-                                        Locale.US,
-                                        "Trued DSF: %.3f @ Mach %.2f (MV Locked)",
-                                        computedDsf.dropScaleFactor,
-                                        computedDsf.mach
+                        }
+
+                        // Optional Logbook / Cold-Bore Shot Importer
+                        if (showLogPicker && matchingLogs.isNotEmpty()) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                shape = MaterialTheme.shapes.small,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "Tap a logged shot to add its range, hold & atmosphere:",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    else -> "Trued DSF: Enter a valid hold beyond zero range"
+                                    matchingLogs.forEach { entry ->
+                                        val alreadyAdded = rows.any { it.id == "log-${entry.id}" }
+                                        val obsDisplay = if (entry.angularUnit == prefs.angularUnit) {
+                                            entry.actualElevation
+                                        } else if (isMrad) {
+                                            entry.actualElevation / 3.43774677
+                                        } else {
+                                            entry.actualElevation * 3.43774677
+                                        }
+                                        Surface(
+                                            onClick = {
+                                                if (!alreadyAdded) {
+                                                    val obs = BallisticEngine.logEntryToTruingObservation(
+                                                        entry = entry,
+                                                        fallbackAtmosphere = uiState.solverInput.atmosphere
+                                                    )
+                                                    rows = rows + EditableTruingRow(
+                                                        id = "log-${entry.id}",
+                                                        rangeText = entry.targetRangeYards.roundToInt().toString(),
+                                                        holdText = String.format(Locale.US, "%.2f", abs(obsDisplay)),
+                                                        inclinationDeg = entry.inclinationDeg,
+                                                        atmosphere = obs.atmosphere,
+                                                        label = if (entry.isColdBore) "Cold Bore" else "Log",
+                                                        isColdBore = entry.isColdBore
+                                                    )
+                                                }
+                                            },
+                                            color = if (alreadyAdded) {
+                                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                            } else {
+                                                MaterialTheme.colorScheme.surface
+                                            },
+                                            shape = MaterialTheme.shapes.small,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    if (entry.isColdBore) {
+                                                        Icon(
+                                                            Icons.Default.AcUnit,
+                                                            contentDescription = "Cold Bore",
+                                                            tint = MaterialTheme.colorScheme.tertiary,
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                        Spacer(Modifier.width(4.dp))
+                                                    }
+                                                    Text(
+                                                        text = "${entry.targetRangeYards.roundToInt()} yd • ${String.format(Locale.US, "%.2f", obsDisplay)} $unitLabel • ${entry.temperatureF.roundToInt()}°F",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                Text(
+                                                    text = if (alreadyAdded) "Added" else "+ Add",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Observation rows
+                        rows.forEachIndexed { idx, row ->
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedTextField(
+                                    value = row.rangeText,
+                                    onValueChange = { v ->
+                                        rows = rows.toMutableList().also { it[idx] = row.copy(rangeText = v) }
+                                    },
+                                    label = { Text(if (row.isColdBore) "CB yd" else "Dist (yd)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = row.holdText,
+                                    onValueChange = { v ->
+                                        rows = rows.toMutableList().also { it[idx] = row.copy(holdText = v) }
+                                    },
+                                    label = { Text("Obs ($unitLabel)") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (rows.size > 1) {
+                                    IconButton(
+                                        onClick = { rows = rows.toMutableList().also { it.removeAt(idx) } },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Remove point", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+
+                        if (rows.size < 8) {
+                            OutlinedButton(
+                                onClick = {
+                                    val lastDist = rows.lastOrNull()?.rangeText?.toDoubleOrNull() ?: currentSolution.rangeYards
+                                    val nextDist = (lastDist + 200.0).coerceAtMost(1500.0)
+                                    val predSol = BallisticEngine.solve(
+                                        profile = uiState.activeProfile,
+                                        atmosphere = uiState.solverInput.atmosphere,
+                                        rangeYards = nextDist,
+                                        inclinationDeg = uiState.solverInput.inclinationDeg,
+                                        options = solverOptions
+                                    )
+                                    val predVal = if (isMrad) predSol.elevationMrad else predSol.elevationMoa
+                                    rows = rows + EditableTruingRow(
+                                        id = "pt-${System.currentTimeMillis()}-${rows.size}",
+                                        rangeText = nextDist.roundToInt().toString(),
+                                        holdText = String.format(Locale.US, "%.2f", abs(predVal)),
+                                        inclinationDeg = uiState.solverInput.inclinationDeg,
+                                        label = "Manual"
+                                    )
                                 },
-                                style = MaterialTheme.typography.titleSmall,
-                                color = if (computedDsf != null) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
-                                fontWeight = FontWeight.Bold
-                            )
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Add Distance Point (${rows.size}/8)")
+                            }
+                        }
+
+                        // Fit Summary + Residual Table
+                        val res = multiPointResult
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                if (res == null) {
+                                    Text(
+                                        text = "Enter at least one valid range beyond zero (${uiState.activeScope.zeroRangeYards.toInt() + 10} yd+) and observed hold.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                } else {
+                                    val mvDelta = res.fittedMvFps - uiState.activeProfile.muzzleVelocityFps
+                                    Text(
+                                        text = String.format(
+                                            Locale.US,
+                                            "Trued MV: %d fps (%+.0f fps)",
+                                            res.fittedMvFps.roundToInt(),
+                                            mvDelta
+                                        ),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                    if (res.fittedBothMvAndBc) {
+                                        val bcDelta = res.fittedBc - uiState.activeProfile.primaryBc()
+                                        Text(
+                                            text = String.format(
+                                                Locale.US,
+                                                "Trued BC: %.3f (%+.3f • %.1f%%)",
+                                                res.fittedBc,
+                                                bcDelta,
+                                                (res.bcScaleFactor - 1.0) * 100.0
+                                            ),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
+                                    val beforeRmsDisp = res.beforeRmsErrorMoa / moaFactor
+                                    val afterRmsDisp = res.rmsErrorMoa / moaFactor
+                                    Text(
+                                        text = String.format(
+                                            Locale.US,
+                                            "RMS Error: %.2f → %.2f %s",
+                                            beforeRmsDisp,
+                                            afterRmsDisp,
+                                            unitLabel
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    Text(
+                                        text = "Residuals (Range | Obs | Fit | Δ $unitLabel)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    res.residuals.forEach { pt ->
+                                        val obsD = pt.observedMoa / moaFactor
+                                        val fitD = pt.predictedAfterMoa / moaFactor
+                                        val errD = pt.residualAfterMoa / moaFactor
+                                        val tag = if (pt.isColdBore) " [CB]" else ""
+                                        Text(
+                                            text = String.format(
+                                                Locale.US,
+                                                "%4d yd | %5.2f | %5.2f | %+.2f (M%.2f)%s",
+                                                pt.rangeYards.roundToInt(),
+                                                obsD,
+                                                fitD,
+                                                errD,
+                                                pt.mach,
+                                                tag
+                                            ),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    res.warnings.forEach { warn ->
+                                        Text(
+                                            text = "• $warn",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.tertiary
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
-                }
 
-                if (uiState.activeAmmo.dsfTable.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    1 -> {
                         Text(
-                            text = "Saved DSF: " + uiState.activeAmmo.dsfTable.joinToString(", ") {
-                                String.format(Locale.US, "M%.2f→%.3f", it.mach, it.dropScaleFactor)
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f)
+                            text = "Stage 2 (Transonic / Subsonic): Locks MV and calibrates Drop Scale Factor (DSF) at Mach ≤ 1.2 for ${uiState.activeAmmo.name}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        TextButton(onClick = onClearDsf) { Text("Reset DSF") }
+                        OutlinedTextField(
+                            value = dsfDistText,
+                            onValueChange = { dsfDistText = it; errorMsg = null },
+                            label = { Text("Validation Distance (yd)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = dsfObsText,
+                            onValueChange = { dsfObsText = it; errorMsg = null },
+                            label = { Text("Actual Elevation Needed ($unitLabel UP)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = String.format(
+                                        Locale.US,
+                                        "Target Mach: M%.2f (%s) • Current MV: %d fps",
+                                        dsfPreviewSol.mach,
+                                        if (dsfIsSupersonic) "Supersonic" else "Sub/Transonic",
+                                        uiState.activeAmmo.muzzleVelocityFps.roundToInt()
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = when {
+                                        dsfIsSupersonic -> "Move to a transonic/subsonic range (Mach ≤ 1.2) for DSF calibration."
+                                        computedDsf != null -> String.format(
+                                            Locale.US,
+                                            "Trued DSF: %.3f @ Mach %.2f (MV Locked)",
+                                            computedDsf.dropScaleFactor,
+                                            computedDsf.mach
+                                        )
+                                        else -> "Trued DSF: Enter a valid hold beyond zero range"
+                                    },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = if (computedDsf != null) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        if (uiState.activeAmmo.dsfTable.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Saved DSF: " + uiState.activeAmmo.dsfTable.joinToString(", ") {
+                                        String.format(Locale.US, "M%.2f→%.3f", it.mach, it.dropScaleFactor)
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(onClick = onClearDsf) { Text("Reset DSF") }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        Text(
+                            text = "Tall-Target Optic Test for ${uiState.activeScope.name}. Fire a plumb baseline group, dial a known amount, and measure the true POI shift in inches.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = !ttAxisIsWind,
+                                onClick = { ttAxisIsWind = false },
+                                label = { Text("Elevation Turret") }
+                            )
+                            FilterChip(
+                                selected = ttAxisIsWind,
+                                onClick = { ttAxisIsWind = true },
+                                label = { Text("Windage Turret") }
+                            )
+                        }
+                        OutlinedTextField(
+                            value = ttDistText,
+                            onValueChange = { ttDistText = it },
+                            label = { Text("Measured Target Distance (yd)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = ttDialedText,
+                                onValueChange = { ttDialedText = it },
+                                label = { Text("Dialed ($unitLabel)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = ttMeasuredInText,
+                                onValueChange = { ttMeasuredInText = it },
+                                label = { Text("Measured Shift (in)") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = String.format(
+                                        Locale.US,
+                                        "Current Scope SSF: Elev %.3f • Wind %.3f",
+                                        uiState.activeScope.elevationSsf,
+                                        uiState.activeScope.windageSsf
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (ttResult == null) {
+                                    Text(
+                                        text = "Enter valid distance (10–1000 yd), dialed amount, and measured inches.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                } else {
+                                    Text(
+                                        text = String.format(
+                                            Locale.US,
+                                            "Expected Shift: %.2f\" • Tracking Error: %+.2f%%",
+                                            ttResult.expectedShiftInches,
+                                            ttResult.trackingErrorPercent
+                                        ),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = String.format(
+                                            Locale.US,
+                                            "Computed %s SSF: %.3f",
+                                            if (ttAxisIsWind) "Windage" else "Elevation",
+                                            ttResult.scaleFactor
+                                        ),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (ttResult.isWithinValidRange) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+                                    )
+                                    if (!ttResult.isWithinValidRange) {
+                                        Text(
+                                            text = "SSF outside 0.800–1.200 — double-check distance, dialed units, and tape measurement.",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (abs(uiState.activeScope.elevationSsf - 1.0) > 0.001 ||
+                            abs(uiState.activeScope.windageSsf - 1.0) > 0.001
+                        ) {
+                            TextButton(
+                                onClick = { onApplyScopeSsf(1.0, 1.0) }
+                            ) { Text("Reset Scope SSF to 1.000") }
+                        }
                     }
                 }
 
@@ -1639,22 +2112,38 @@ private fun BallisticCalibrationDialog(
             }
         },
         confirmButton = {
-            if (stageTab == 0) {
-                Button(
-                    enabled = computedMv != null,
-                    onClick = {
-                        if (computedMv != null) onApplyTruedMv(computedMv)
-                        else errorMsg = "Unable to solve trued MV for these inputs."
-                    }
-                ) { Text("Apply Trued MV") }
-            } else {
-                Button(
-                    enabled = computedDsf != null,
-                    onClick = {
-                        if (computedDsf != null) onApplyTruedDsf(computedDsf)
-                        else errorMsg = "Unable to solve DSF for these inputs."
-                    }
-                ) { Text("Apply DSF") }
+            when (stageTab) {
+                0 -> {
+                    val res = multiPointResult
+                    Button(
+                        enabled = res != null,
+                        onClick = {
+                            if (res != null) onApplyMultiPoint(res)
+                            else errorMsg = "Unable to fit MV/BC for these inputs."
+                        }
+                    ) { Text(if (res?.fittedBothMvAndBc == true) "Apply MV & BC" else "Apply Trued MV") }
+                }
+                1 -> {
+                    Button(
+                        enabled = computedDsf != null,
+                        onClick = {
+                            if (computedDsf != null) onApplyTruedDsf(computedDsf)
+                            else errorMsg = "Unable to solve DSF for these inputs."
+                        }
+                    ) { Text("Apply DSF") }
+                }
+                else -> {
+                    val res = ttResult
+                    Button(
+                        enabled = res != null && res.isWithinValidRange,
+                        onClick = {
+                            if (res != null && res.isWithinValidRange) {
+                                if (ttAxisIsWind) onApplyScopeSsf(null, res.scaleFactor)
+                                else onApplyScopeSsf(res.scaleFactor, null)
+                            }
+                        }
+                    ) { Text("Save Scope SSF") }
+                }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

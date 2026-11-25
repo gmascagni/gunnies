@@ -22,6 +22,7 @@ import com.gunnies.ballistics.model.DefaultProfiles
 import com.gunnies.ballistics.model.DistanceUnit
 import com.gunnies.ballistics.model.DsfPoint
 import com.gunnies.ballistics.model.FirearmSetup
+import com.gunnies.ballistics.model.MultiPointTruingResult
 import com.gunnies.ballistics.model.PressureUnit
 import com.gunnies.ballistics.model.RifleProfile
 import com.gunnies.ballistics.model.ScopeSetup
@@ -600,6 +601,74 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             repository.saveAmmo(activeAmmo.copy(dsfTable = emptyList()))
             showMessage("Cleared DSF table for ${activeAmmo.name}")
+        }
+    }
+
+    /**
+     * Applies a multi-point fitted MV (and optional BC / scaled Multi-BC bands) onto the active
+     * Ammo load, backing out any active suppressor MV shift.
+     */
+    fun applyMultiPointTruing(result: MultiPointTruingResult) {
+        val current = uiState.value
+        val activeAmmo = current.activeAmmo
+        val suppShift = current.activeSuppressor?.mvShiftFps ?: 0.0
+        val roundedBaseMv = (result.fittedMvFps - suppShift).roundToInt().toDouble().coerceIn(200.0, 5500.0)
+
+        val updatedAmmo = if (result.fittedBothMvAndBc) {
+            activeAmmo.copy(
+                muzzleVelocityFps = roundedBaseMv,
+                ballisticCoefficient = result.fittedBc.coerceIn(0.02, 2.0),
+                bcBands = result.fittedBcBands
+            )
+        } else {
+            activeAmmo.copy(muzzleVelocityFps = roundedBaseMv)
+        }
+
+        viewModelScope.launch {
+            repository.saveAmmo(updatedAmmo)
+            val msg = if (result.fittedBothMvAndBc) {
+                String.format(
+                    Locale.US,
+                    "Trued %s: MV %d fps, BC %.3f (RMS %.2f MOA)",
+                    activeAmmo.name,
+                    roundedBaseMv.toInt(),
+                    updatedAmmo.primaryBc(),
+                    result.rmsErrorMoa
+                )
+            } else {
+                String.format(
+                    Locale.US,
+                    "Trued %s: MV %d fps (RMS %.2f MOA)",
+                    activeAmmo.name,
+                    roundedBaseMv.toInt(),
+                    result.rmsErrorMoa
+                )
+            }
+            showMessage(msg)
+        }
+    }
+
+    /** Persists Tall-Target calibrated Elevation and/or Windage Sight Scale Factors on the active scope. */
+    fun applyScopeSsf(elevationSsf: Double? = null, windageSsf: Double? = null) {
+        val activeScope = uiState.value.activeScope
+        val nextElev = elevationSsf?.coerceIn(0.800, 1.200) ?: activeScope.elevationSsf
+        val nextWind = windageSsf?.coerceIn(0.800, 1.200) ?: activeScope.windageSsf
+        viewModelScope.launch {
+            repository.saveScope(
+                activeScope.copy(
+                    elevationSsf = nextElev,
+                    windageSsf = nextWind
+                )
+            )
+            showMessage(
+                String.format(
+                    Locale.US,
+                    "Saved %s SSF: Elev %.3f • Wind %.3f",
+                    activeScope.name,
+                    nextElev,
+                    nextWind
+                )
+            )
         }
     }
 

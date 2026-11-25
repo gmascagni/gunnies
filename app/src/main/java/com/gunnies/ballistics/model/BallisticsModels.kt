@@ -606,6 +606,64 @@ data class SessionLogEntry(
 )
 
 /**
+ * Single observed drop point for multi-point MV + BC truing.
+ * [atmosphere] overrides the active session atmosphere when imported from a historical logbook shot.
+ */
+data class TruingObservation(
+    val rangeYards: Double,
+    val observedElevationMoa: Double,
+    val inclinationDeg: Double = 0.0,
+    val atmosphere: Atmosphere? = null,
+    val label: String = "",
+    val isColdBore: Boolean = false
+)
+
+/**
+ * Per-point before/after residual from multi-point MV + BC calibration.
+ */
+data class TruingPointResidual(
+    val rangeYards: Double,
+    val observedMoa: Double,
+    val predictedBeforeMoa: Double,
+    val predictedAfterMoa: Double,
+    val residualBeforeMoa: Double,
+    val residualAfterMoa: Double,
+    val mach: Double,
+    val label: String = "",
+    val isColdBore: Boolean = false
+)
+
+/**
+ * Output of [com.gunnies.ballistics.engine.BallisticEngine.fitMvAndBc].
+ */
+data class MultiPointTruingResult(
+    val fittedMvFps: Double,
+    val fittedBc: Double,
+    val bcScaleFactor: Double,
+    val fittedBcBands: List<BcBand>,
+    val fittedBothMvAndBc: Boolean,
+    val beforeRmsErrorMoa: Double,
+    val rmsErrorMoa: Double,
+    val maxAbsErrorMoa: Double,
+    val residuals: List<TruingPointResidual>,
+    val warnings: List<String> = emptyList()
+)
+
+/**
+ * Output of [com.gunnies.ballistics.engine.BallisticEngine.computeTallTargetCalibration].
+ */
+data class TallTargetResult(
+    val distanceYards: Double,
+    val dialedAmount: Double,
+    val angularUnit: AngularUnit,
+    val expectedShiftInches: Double,
+    val measuredShiftInches: Double,
+    val scaleFactor: Double,
+    val trackingErrorPercent: Double,
+    val isWithinValidRange: Boolean
+)
+
+/**
  * Versioned full-arsenal JSON backup payload (schemaVersion = 1).
  */
 @Serializable
