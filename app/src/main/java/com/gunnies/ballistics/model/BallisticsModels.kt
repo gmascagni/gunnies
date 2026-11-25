@@ -664,6 +664,35 @@ data class TallTargetResult(
 )
 
 /**
+ * 1-sigma uncertainty inputs for Hit Probability estimation against a circular target plate.
+ */
+data class ShotUncertaintyInput(
+    val mvSdFps: Double = 10.0,
+    val windErrorMph: Double = 2.0,
+    val rangeErrorYards: Double = 2.0,
+    val bcErrorPercent: Double = 2.0,
+    val systemPrecisionMoa: Double = 0.35,
+    val targetDiameterInches: Double = 10.0
+)
+
+/**
+ * Output of [com.gunnies.ballistics.engine.BallisticEngine.computeHitProbability].
+ */
+data class HitProbabilityResult(
+    val hitProbabilityPercent: Double,
+    val targetDiameterInches: Double,
+    val rangeYards: Double,
+    val sigmaVerticalInches: Double,
+    val sigmaHorizontalInches: Double,
+    val sigmaMvInches: Double,
+    val sigmaRangeInches: Double,
+    val sigmaBcInches: Double,
+    val sigmaWindInches: Double,
+    val sigmaSystemInches: Double,
+    val dominantErrorSource: String
+)
+
+/**
  * Versioned full-arsenal JSON backup payload (schemaVersion = 1).
  */
 @Serializable

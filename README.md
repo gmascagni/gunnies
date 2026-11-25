@@ -35,7 +35,8 @@ The simplest way to install Gunnies Ballistics on Android (**Android 8.0 / API 2
   - Standard BRL/JBM **G1 and G7** drag curves (`Mach 0.00–5.00`) plus **Custom `Cd(Mach)` Drag Tables** per ammo load (JSON and CSV import/export; see [schema documentation](docs/schemas/custom-drag-curve.md)) with an active drag-model indicator on the Solver HUD.
   - **Stepped Multi-BC:** Up to **5 velocity-to-BC bands** per ammo load in the UI with smooth ±20 fps blending across boundaries.
   - **Multi-Point Ballistic Calibration (Truing) & Tall-Target SSF:** Jointly fit **Muzzle Velocity (MV) and BC** across multiple observed drops (with per-point residuals, RMS error, and optional import from your **Cold-Bore / Session Logbook**), calibrate transonic/subsonic **Drop Scale Factor (DSF)** at `Mach ≤ 1.20`, and run the built-in **Tall-Target Optic Test** to calibrate Elevation & Windage Sight Scale Factors (`SSF`).
-  - **3-Zone Wind Banding** (Near `0–33%`, Mid `33–66%`, Far `66–100%`) plus **Single Wind**, **Wind Gust Bracket**, 3D inclined-fire wind & gravity decomposition, and **Moving Target Lead (Mover)**.
+  - **3-Zone Wind Banding & Flight-Path Visual** (Near `0–33%`, Mid `33–66%`, Far `66–100%` with directional trajectory corridor diagram) plus **Single Wind**, **Wind Gust Bracket**, 3D inclined-fire wind & gravity decomposition, and **Moving Target Lead (Mover)**.
+  - **Hit Probability & Uncertainty Analysis:** Propagate 1σ uncertainty in **MV SD**, **crosswind call**, **range**, **BC/drag %**, and **rifle/shooter 1σ** through the 3-DOF+ solver and integrate the 2D elliptical Gaussian over a circular target plate (`4"`–`24"` or custom), identifying the dominant error source.
   - **Optional Corrections:** Miller `Sg` + Litz **Spin Drift**, Near-zone **Aerodynamic Jump**, and horizontal + vertical (Eötvös) **Coriolis** (activates once GPS latitude is synced).
   - **Powder Temperature Sensitivity** (`fps/°F` & chrono temp), vertical/horizontal zero POI offsets, suppressor MV & POI shifts, and optic **Elevation/Windage Sight Scale Factors (SSF)**.
   - **DOPE Range Card**, interactive **Trajectory Drop Chart**, and **MPBR** (`6"` vital zone default).
@@ -203,9 +204,10 @@ app/src/main/java/com/gunnies/ballistics/
 ```powershell
 .\gradlew.bat testDebugUnitTest
 ```
-Includes **38 unit tests** across:
+Includes **41 unit tests** across:
 - `BallisticEngineTest` (**19 tests**): G1/G7 table alignment, 3D inclined wind, 3-zone wind banding, stepped Multi-BC smooth blending, DSF interpolation & truing, Coriolis, aero jump, MV truing, MPBR, single-pass DOPE consistency, JSON backup codec, catalog counts.
 - `BallisticValidationTest` (**1 multi-fixture suite / 8 external benchmarks**): compares Gunnies against live-captured reference tables from Berger (Bryan Litz G1/G7) and ShootersCalculator across `.22 LR` subsonic, `.223 Rem`, `.308 Win`, `6.5 Creedmoor`, `.300 Win Mag`, and `1,200 yd` high-altitude `+15°` inclined fire. See **[VALIDATION.md](VALIDATION.md)** for full tables, tolerances, and deviation notes.
 - `CalibrationTest` (**5 tests**): Multi-point Levenberg-Marquardt MV+BC recovery (`6.5 CM` single-BC & multi-BC), single-point & Custom-Cd MV-only fallbacks, cold-bore/logbook atmospheric snapshot import, and Tall-Target MRAD/MOA SSF math & bounds.
+- `HitProbabilityTest` (**3 tests**): Exact Rayleigh CDF verification for isotropic circular Gaussian dispersion, monotonic plate-size & wind-uncertainty behavior, and subsonic `.22 LR` range-uncertainty dominance.
 - `CustomDragAndImportTest` (**6 tests**): Custom `Cd(Mach)` equivalence against G7 (`< 0.015 MOA` at 1,000 yd), JSON/CSV round-trip & validation errors, LBC1800 safe drag-model fallback, Strelok XML/key=value/CSV profile import, and attributed manufacturer catalog verification.
 - `Lbc1800ProtocolTest` (**7 tests**): XOR checksum verification, HDLC chunked deframing, `:BP` / `:AV` frame encoding, primary BC & range-weighted average wind serialization.

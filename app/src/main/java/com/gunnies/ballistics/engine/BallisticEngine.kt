@@ -8,9 +8,11 @@ import com.gunnies.ballistics.model.CustomDragCurve
 import com.gunnies.ballistics.model.DistanceUnit
 import com.gunnies.ballistics.model.DragModel
 import com.gunnies.ballistics.model.DsfPoint
+import com.gunnies.ballistics.model.HitProbabilityResult
 import com.gunnies.ballistics.model.MultiPointTruingResult
 import com.gunnies.ballistics.model.RifleProfile
 import com.gunnies.ballistics.model.SessionLogEntry
+import com.gunnies.ballistics.model.ShotUncertaintyInput
 import com.gunnies.ballistics.model.StageTarget
 import com.gunnies.ballistics.model.TallTargetResult
 import com.gunnies.ballistics.model.TruingObservation
@@ -1000,6 +1002,196 @@ object BallisticEngine {
             scaleFactor = roundedSsf,
             trackingErrorPercent = trackingErrPct,
             isWithinValidRange = isValid
+        )
+    }
+
+    /**
+     * Estimates first-round hit probability against a circular target plate of diameter
+     * [uncertainty.targetDiameterInches] using first-order Gaussian error propagation around
+     * the nominal 3-DOF+ trajectory and exact polar integration of the 2D elliptical Gaussian
+     * over the circular plate.
+     *
+     * Assumes centered zero (no mean bias) and statistically independent 1-sigma error sources:
+     * MV SD, crosswind call uncertainty, range uncertainty, BC/drag uncertainty, and rifle/shooter 1σ.
+     */
+    fun computeHitProbability(
+        profile: RifleProfile,
+        atmosphere: Atmosphere,
+        rangeYards: Double,
+        uncertainty: ShotUncertaintyInput,
+        inclinationDeg: Double = 0.0,
+        options: SolverOptions = SolverOptions()
+    ): HitProbabilityResult {
+        val safeRange = rangeYards.coerceAtLeast(10.0)
+        val plateDia = uncertainty.targetDiameterInches.coerceIn(0.5, 120.0)
+        val plateRadius = plateDia * 0.5
+
+        val baseZero = computeZeroAngleRad(profile)
+        val nominal = solve(
+            profile = profile,
+            atmosphere = atmosphere,
+            rangeYards = safeRange,
+            inclinationDeg = inclinationDeg,
+            cachedZeroAngleRad = baseZero,
+            options = options
+        )
+
+        // 1. Muzzle Velocity 1-sigma (central difference)
+        val mvSd = uncertainty.mvSdFps.coerceIn(0.0, 250.0)
+        var dDropMv = 0.0
+        var dDriftMv = 0.0
+        if (mvSd > 0.05) {
+            val pPlus = profile.copy(muzzleVelocityFps = (profile.muzzleVelocityFps + mvSd).coerceAtMost(5500.0))
+            val pMinus = profile.copy(muzzleVelocityFps = (profile.muzzleVelocityFps - mvSd).coerceAtLeast(200.0))
+            val sPlus = solve(pPlus, atmosphere, safeRange, inclinationDeg, options = options)
+            val sMinus = solve(pMinus, atmosphere, safeRange, inclinationDeg, options = options)
+            dDropMv = 0.5 * abs(sPlus.dropInches - sMinus.dropInches)
+            dDriftMv = 0.5 * abs(sPlus.windDriftInches - sMinus.windDriftInches)
+        }
+
+        // 2. Range Estimation 1-sigma (vertical miss relative to dialed LOS at nominal range)
+        val rngErr = uncertainty.rangeErrorYards.coerceIn(0.0, safeRange * 0.25)
+        var dDropRange = 0.0
+        if (rngErr > 0.05) {
+            val rPlus = safeRange + rngErr
+            val rMinus = (safeRange - rngErr).coerceAtLeast(5.0)
+            val sPlus = solve(profile, atmosphere, rPlus, inclinationDeg, cachedZeroAngleRad = baseZero, options = options)
+            val sMinus = solve(profile, atmosphere, rMinus, inclinationDeg, cachedZeroAngleRad = baseZero, options = options)
+            val missPlus = sPlus.dropInches - nominal.dropInches * (rPlus / safeRange)
+            val missMinus = sMinus.dropInches - nominal.dropInches * (rMinus / safeRange)
+            dDropRange = 0.5 * abs(missPlus - missMinus)
+        }
+
+        // 3. BC / Drag 1-sigma (scales BC or inverse custom Cd by 1 ± pct)
+        val bcPct = (uncertainty.bcErrorPercent.coerceIn(0.0, 25.0)) / 100.0
+        var dDropBc = 0.0
+        var dDriftBc = 0.0
+        if (bcPct > 1e-4) {
+            fun scaleDrag(mult: Double): RifleProfile {
+                return if (profile.usesCustomDragCurve()) {
+                    val c = profile.customDragCurve!!
+                    val inv = 1.0 / mult
+                    profile.copy(
+                        customDragCurve = c.copy(
+                            points = c.points.map { it.copy(cd = (it.cd * inv).coerceIn(0.01, 3.0)) }
+                        )
+                    )
+                } else {
+                    profile.copy(
+                        ballisticCoefficient = (profile.ballisticCoefficient * mult).coerceIn(0.02, 2.0),
+                        bcBands = profile.bcBands.map { it.copy(bc = (it.bc * mult).coerceIn(0.02, 2.0)) }
+                    )
+                }
+            }
+            val sPlus = solve(scaleDrag(1.0 + bcPct), atmosphere, safeRange, inclinationDeg, options = options)
+            val sMinus = solve(scaleDrag(1.0 - bcPct), atmosphere, safeRange, inclinationDeg, options = options)
+            dDropBc = 0.5 * abs(sPlus.dropInches - sMinus.dropInches)
+            dDriftBc = 0.5 * abs(sPlus.windDriftInches - sMinus.windDriftInches)
+        }
+
+        // 4. Crosswind Call 1-sigma (adds ±windErrorMph pure 90° crosswind perturbation)
+        val windErr = uncertainty.windErrorMph.coerceIn(0.0, 25.0)
+        var dDriftWind = 0.0
+        var dDropWind = 0.0
+        if (windErr > 0.05) {
+            fun addCrosswind(baseAtmo: Atmosphere, deltaCrossMph: Double): Atmosphere {
+                fun shiftZone(speed: Double, dirDeg: Double): Pair<Double, Double> {
+                    val rad = Math.toRadians(dirDeg)
+                    val head = speed * cos(rad)
+                    val cross = speed * sin(rad) + deltaCrossMph
+                    val newSpd = sqrt(head * head + cross * cross)
+                    val newDir = ((Math.toDegrees(atan2(cross, head)) % 360.0) + 360.0) % 360.0
+                    return newSpd to newDir
+                }
+                val wp = baseAtmo.windProfile
+                return if (wp != null && wp.mode == WindMode.THREE_ZONE) {
+                    val (ns, nd) = shiftZone(wp.near.speedMph, wp.near.directionDeg)
+                    val (ms, md) = shiftZone(wp.mid.speedMph, wp.mid.directionDeg)
+                    val (fs, fd) = shiftZone(wp.far.speedMph, wp.far.directionDeg)
+                    val updatedWp = wp.copy(
+                        near = wp.near.copy(speedMph = ns, directionDeg = nd),
+                        mid = wp.mid.copy(speedMph = ms, directionDeg = md),
+                        far = wp.far.copy(speedMph = fs, directionDeg = fd)
+                    )
+                    val avg = updatedWp.rangeWeightedAverage()
+                    baseAtmo.copy(
+                        windSpeedMph = avg.speedMph,
+                        windDirectionDeg = avg.directionDeg,
+                        windProfile = updatedWp,
+                        windGustMph = 0.0
+                    )
+                } else {
+                    val (ns, nd) = shiftZone(baseAtmo.windSpeedMph, baseAtmo.windDirectionDeg)
+                    baseAtmo.copy(windSpeedMph = ns, windDirectionDeg = nd, windGustMph = 0.0)
+                }
+            }
+            val sPlus = solve(profile, addCrosswind(atmosphere, windErr), safeRange, inclinationDeg, cachedZeroAngleRad = baseZero, options = options)
+            val sMinus = solve(profile, addCrosswind(atmosphere, -windErr), safeRange, inclinationDeg, cachedZeroAngleRad = baseZero, options = options)
+            dDriftWind = 0.5 * abs(sPlus.windDriftInches - sMinus.windDriftInches)
+            dDropWind = 0.5 * abs(sPlus.dropInches - sMinus.dropInches)
+        }
+
+        // 5. Mechanical Rifle + Shooter 1-sigma dispersion (per axis, inches at target range)
+        val sysMoa = uncertainty.systemPrecisionMoa.coerceIn(0.0, 10.0)
+        val sigmaSysIn = sysMoa * (safeRange / 100.0) * 1.0471975512
+
+        val sigmaV = sqrt(
+            dDropMv * dDropMv +
+                dDropRange * dDropRange +
+                dDropBc * dDropBc +
+                dDropWind * dDropWind +
+                sigmaSysIn * sigmaSysIn
+        )
+        val sigmaH = sqrt(
+            dDriftWind * dDriftWind +
+                dDriftMv * dDriftMv +
+                dDriftBc * dDriftBc +
+                sigmaSysIn * sigmaSysIn
+        )
+
+        // Exact 2D elliptical Gaussian integral over circular plate of radius R via 32-pt midpoint quadrature on [0, pi/2]
+        val hitProb = if (sigmaV < 1e-4 && sigmaH < 1e-4) {
+            1.0
+        } else {
+            val sv = sigmaV.coerceAtLeast(1e-4)
+            val sh = sigmaH.coerceAtLeast(1e-4)
+            val invSv2 = 1.0 / (sv * sv)
+            val invSh2 = 1.0 / (sh * sh)
+            val r2Half = 0.5 * plateRadius * plateRadius
+            val steps = 32
+            val dTheta = (PI * 0.5) / steps
+            var integral = 0.0
+            for (k in 0 until steps) {
+                val theta = (k + 0.5) * dTheta
+                val c = cos(theta)
+                val s = sin(theta)
+                val a = c * c * invSh2 + s * s * invSv2
+                integral += (1.0 - exp(-r2Half * a)) / a
+            }
+            ((2.0 / (PI * sh * sv)) * integral * dTheta).coerceIn(0.0, 1.0)
+        }
+
+        val components = listOf(
+            "Wind" to sqrt(dDriftWind * dDriftWind + dDropWind * dDropWind),
+            "Range" to dDropRange,
+            "MV SD" to sqrt(dDropMv * dDropMv + dDriftMv * dDriftMv),
+            "BC" to sqrt(dDropBc * dDropBc + dDriftBc * dDriftBc),
+            "Rifle 1σ" to sigmaSysIn
+        )
+        val dominant = components.maxByOrNull { it.second }?.first ?: "Rifle 1σ"
+
+        return HitProbabilityResult(
+            hitProbabilityPercent = hitProb * 100.0,
+            targetDiameterInches = plateDia,
+            rangeYards = safeRange,
+            sigmaVerticalInches = sigmaV,
+            sigmaHorizontalInches = sigmaH,
+            sigmaMvInches = sqrt(dDropMv * dDropMv + dDriftMv * dDriftMv),
+            sigmaRangeInches = dDropRange,
+            sigmaBcInches = sqrt(dDropBc * dDropBc + dDriftBc * dDriftBc),
+            sigmaWindInches = sqrt(dDriftWind * dDriftWind + dDropWind * dDropWind),
+            sigmaSystemInches = sigmaSysIn,
+            dominantErrorSource = dominant
         )
     }
 

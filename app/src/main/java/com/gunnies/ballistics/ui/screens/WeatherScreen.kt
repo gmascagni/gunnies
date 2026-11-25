@@ -479,28 +479,11 @@ private fun LocalWindCard(
                     far = WindZone(atmo.windSpeedMph, atmo.windDirectionDeg)
                 )
                 val avg = wp.rangeWeightedAverage()
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)),
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = "3-ZONE BALLISTIC WIND ACTIVE",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "LBC1800 Range-Weighted Avg: ${UnitFormatters.formatWind(avg.speedMph, windUnit)} @ ${
-                                UnitFormatters.windClockHour(avg.directionDeg)
-                            }:00 (${avg.directionDeg.roundToInt()}°)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                }
+                ThreeZoneWindPathVisual(
+                    wp = wp,
+                    avg = avg,
+                    windUnit = windUnit
+                )
 
                 listOf(
                     Triple(0, "NEAR (0–33%)", wp.near),
@@ -998,5 +981,171 @@ private fun ManualAtmosphereInputs(
             singleLine = true,
             modifier = Modifier.weight(0.8f)
         )
+    }
+}
+
+/**
+ * Visualizes 3-Zone Ballistic Wind across the flight path (Muzzle -> Near 0-33% -> Mid 33-66% -> Far 66-100% -> Target)
+ * with directional arrows scaled by wind speed, zone leverage weights (5/9, 3/9, 1/9), and crosswind %.
+ */
+@Composable
+private fun ThreeZoneWindPathVisual(
+    wp: WindProfile,
+    avg: WindZone,
+    windUnit: WindUnit
+) {
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val secondaryColor = MaterialTheme.colorScheme.secondary
+    val tertiaryColor = MaterialTheme.colorScheme.tertiary
+    val outlineColor = MaterialTheme.colorScheme.outlineVariant
+    val onSurface = MaterialTheme.colorScheme.onSurface
+
+    val zones = listOf(
+        Triple("NEAR", "56% wt", wp.near),
+        Triple("MID", "33% wt", wp.mid),
+        Triple("FAR", "11% wt", wp.far)
+    )
+    val zoneColors = listOf(primaryColor, secondaryColor, tertiaryColor)
+
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "3-ZONE FLIGHT PATH SUMMARY",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Muzzle → Target",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Visual Flight Corridor Canvas (Near / Mid / Far arrows across bullet path)
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(74.dp)
+            ) {
+                val w = size.width
+                val h = size.height
+                val midY = h * 0.52f
+                val segW = w / 3f
+
+                // Zone dividers
+                drawLine(outlineColor, Offset(segW, 6f), Offset(segW, h - 6f), strokeWidth = 1.5f)
+                drawLine(outlineColor, Offset(segW * 2f, 6f), Offset(segW * 2f, h - 6f), strokeWidth = 1.5f)
+
+                // Flight path spine (Muzzle -> Target)
+                drawLine(
+                    color = onSurface.copy(alpha = 0.45f),
+                    start = Offset(10f, midY),
+                    end = Offset(w - 10f, midY),
+                    strokeWidth = 2.5f,
+                    cap = StrokeCap.Round
+                )
+                // Muzzle dot & Target bullseye dot
+                drawCircle(primaryColor, radius = 5f, center = Offset(10f, midY))
+                drawCircle(secondaryColor, radius = 6.5f, center = Offset(w - 10f, midY), style = Stroke(width = 2.5f))
+                drawCircle(secondaryColor, radius = 2.5f, center = Offset(w - 10f, midY))
+
+                // Wind vector arrow inside each corridor third
+                // In screen coordinates (bullet travels LEFT->RIGHT = +X, UP = -Y = 9 o'clock side, DOWN = +Y = 3 o'clock side):
+                // Wind FROM directionDeg: 0° = headwind (blows right-to-left: -X), 90° = 3 o'clock (blows bottom-to-top: -Y)
+                zones.forEachIndexed { idx, (_, _, z) ->
+                    val cx = segW * idx + segW * 0.5f
+                    val col = zoneColors[idx]
+                    val spdFrac = (z.speedMph / 20.0).coerceIn(0.18, 1.0).toFloat()
+                    val halfLen = (h * 0.34f) * spdFrac
+                    if (z.speedMph < 0.2) {
+                        drawCircle(col.copy(alpha = 0.55f), radius = 4f, center = Offset(cx, midY))
+                    } else {
+                        val rad = Math.toRadians(z.directionDeg)
+                        // Blowing-TO vector in screen space:
+                        val vx = (-cos(rad)).toFloat()
+                        val vy = (-sin(rad)).toFloat()
+                        val start = Offset(cx - vx * halfLen, midY - vy * halfLen)
+                        val end = Offset(cx + vx * halfLen, midY + vy * halfLen)
+                        drawLine(col, start, end, strokeWidth = 3.2f, cap = StrokeCap.Round)
+
+                        // Arrowhead
+                        val headLen = 9f
+                        val angle = atan2(vy.toDouble(), vx.toDouble())
+                        val leftWing = Offset(
+                            end.x - (headLen * cos(angle - 0.55)).toFloat(),
+                            end.y - (headLen * sin(angle - 0.55)).toFloat()
+                        )
+                        val rightWing = Offset(
+                            end.x - (headLen * cos(angle + 0.55)).toFloat(),
+                            end.y - (headLen * sin(angle + 0.55)).toFloat()
+                        )
+                        drawLine(col, end, leftWing, strokeWidth = 2.8f, cap = StrokeCap.Round)
+                        drawLine(col, end, rightWing, strokeWidth = 2.8f, cap = StrokeCap.Round)
+                    }
+                }
+            }
+
+            // Per-Zone Speed / Clock / Crosswind % Readout Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                zones.forEachIndexed { idx, (name, wt, z) ->
+                    val crossPct = (abs(sin(Math.toRadians(z.directionDeg))) * 100.0).roundToInt()
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "$name ($wt)",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = zoneColors[idx],
+                                maxLines = 1
+                            )
+                            Text(
+                                text = "${UnitFormatters.formatWind(z.speedMph, windUnit)} @ ${UnitFormatters.windClockHour(z.directionDeg)}:00",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = "$crossPct% val",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+
+            Text(
+                text = "Effective Range-Weighted Avg (LBC1800): ${UnitFormatters.formatWind(avg.speedMph, windUnit)} @ ${
+                    UnitFormatters.windClockHour(avg.directionDeg)
+                }:00 (${avg.directionDeg.roundToInt()}°)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
     }
 }

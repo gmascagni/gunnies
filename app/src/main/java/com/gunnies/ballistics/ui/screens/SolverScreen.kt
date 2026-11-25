@@ -101,7 +101,9 @@ import com.gunnies.ballistics.model.AngularUnit
 import com.gunnies.ballistics.model.AppThemeMode
 import com.gunnies.ballistics.model.Atmosphere
 import com.gunnies.ballistics.model.BallisticSolution
+import com.gunnies.ballistics.model.HitProbabilityResult
 import com.gunnies.ballistics.model.MultiPointTruingResult
+import com.gunnies.ballistics.model.ShotUncertaintyInput
 import com.gunnies.ballistics.model.TruingObservation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -150,6 +152,7 @@ fun SolverScreen(
     var showCalibrationDialog by remember { mutableStateOf(false) }
     var showInclinometerDialog by remember { mutableStateOf(false) }
     var showLogShotDialog by remember { mutableStateOf(false) }
+    var showHitProbDialog by remember { mutableStateOf(false) }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isExpanded = maxWidth >= 600.dp
@@ -184,6 +187,7 @@ fun SolverScreen(
                                 onSelectAngularUnit = { viewModel.setAngularUnit(it) },
                                 onOpenInclinometer = { showInclinometerDialog = true },
                                 onOpenTruing = { showCalibrationDialog = true },
+                                onOpenHitProb = { showHitProbDialog = true },
                                 onOpenLogShot = { showLogShotDialog = true },
                                 onOpenLogbook = onOpenLogbook,
                                 onOpenRangefinderTab = onOpenRangefinderTab
@@ -259,6 +263,7 @@ fun SolverScreen(
                             onSelectAngularUnit = { viewModel.setAngularUnit(it) },
                             onOpenInclinometer = { showInclinometerDialog = true },
                             onOpenTruing = { showCalibrationDialog = true },
+                            onOpenHitProb = { showHitProbDialog = true },
                             onOpenLogShot = { showLogShotDialog = true },
                             onOpenLogbook = onOpenLogbook,
                             onOpenRangefinderTab = onOpenRangefinderTab
@@ -360,6 +365,15 @@ fun SolverScreen(
         )
     }
 
+    // Hit Probability & Uncertainty Analysis Dialog
+    if (showHitProbDialog && sol != null) {
+        HitProbabilityDialog(
+            uiState = uiState,
+            currentSolution = sol,
+            onDismiss = { showHitProbDialog = false }
+        )
+    }
+
     // Phone Sensor Inclinometer + Manual Angle Override Dialog
     if (showInclinometerDialog) {
         InclinationAngleDialog(
@@ -458,6 +472,7 @@ private fun FiringSolutionPanel(
     onSelectAngularUnit: (AngularUnit) -> Unit,
     onOpenInclinometer: () -> Unit,
     onOpenTruing: () -> Unit,
+    onOpenHitProb: () -> Unit,
     onOpenLogShot: () -> Unit,
     onOpenLogbook: () -> Unit,
     onOpenRangefinderTab: () -> Unit
@@ -596,9 +611,26 @@ private fun FiringSolutionPanel(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.Speed, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(5.dp))
-                        val calLabel = if (sol.mach <= BallisticEngine.TRANSONIC_MACH_GATE) "True DSF / MV" else "True MV / DSF"
-                        Text(calLabel, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Calibrate", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
+                }
+
+                Surface(
+                    onClick = onOpenHitProb,
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.65f)),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.GpsFixed, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.tertiary)
+                        Spacer(Modifier.width(4.dp))
+                        Text("P(Hit)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
 
@@ -2147,5 +2179,284 @@ private fun BallisticCalibrationDialog(
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HitProbabilityDialog(
+    uiState: AppUiState,
+    currentSolution: BallisticSolution,
+    onDismiss: () -> Unit
+) {
+    val prefs = uiState.preferences
+    var plateDiaText by remember { mutableStateOf("10") }
+    var mvSdText by remember { mutableStateOf("10") }
+    var windErrText by remember { mutableStateOf("2.0") }
+    var rangeErrText by remember { mutableStateOf("2.0") }
+    var bcErrText by remember { mutableStateOf("2.0") }
+    var sysMoaText by remember { mutableStateOf("0.35") }
+    var showModelInfo by remember { mutableStateOf(false) }
+
+    val uncertainty = remember(plateDiaText, mvSdText, windErrText, rangeErrText, bcErrText, sysMoaText) {
+        ShotUncertaintyInput(
+            mvSdFps = (mvSdText.toDoubleOrNull() ?: 10.0).coerceIn(0.0, 250.0),
+            windErrorMph = (windErrText.toDoubleOrNull() ?: 2.0).coerceIn(0.0, 25.0),
+            rangeErrorYards = (rangeErrText.toDoubleOrNull() ?: 2.0).coerceIn(0.0, 200.0),
+            bcErrorPercent = (bcErrText.toDoubleOrNull() ?: 2.0).coerceIn(0.0, 25.0),
+            systemPrecisionMoa = (sysMoaText.toDoubleOrNull() ?: 0.35).coerceIn(0.0, 10.0),
+            targetDiameterInches = (plateDiaText.toDoubleOrNull() ?: 10.0).coerceIn(0.5, 120.0)
+        )
+    }
+
+    val solverOptions = remember(prefs.includeSpinDrift, prefs.includeCoriolis, prefs.includeAeroJump) {
+        BallisticEngine.SolverOptions(
+            includeSpinDrift = prefs.includeSpinDrift,
+            includeCoriolis = prefs.includeCoriolis,
+            includeAeroJump = prefs.includeAeroJump
+        )
+    }
+
+    val result by produceState<HitProbabilityResult?>(
+        initialValue = null,
+        uncertainty,
+        currentSolution.rangeYards,
+        uiState.activeProfile,
+        uiState.solverInput.atmosphere,
+        uiState.solverInput.inclinationDeg,
+        solverOptions
+    ) {
+        value = withContext(Dispatchers.Default) {
+            BallisticEngine.computeHitProbability(
+                profile = uiState.activeProfile,
+                atmosphere = uiState.solverInput.atmosphere,
+                rangeYards = currentSolution.rangeYards,
+                uncertainty = uncertainty,
+                inclinationDeg = uiState.solverInput.inclinationDeg,
+                options = solverOptions
+            )
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.GpsFixed, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
+                Spacer(Modifier.width(8.dp))
+                Text("Hit Probability — ${UnitFormatters.formatDistance(currentSolution.rangeYards, prefs.distanceUnit)}")
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Hero P(Hit) Banner
+                val res = result
+                val hitColor = when {
+                    res == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                    res.hitProbabilityPercent >= 75.0 -> MaterialTheme.colorScheme.secondary
+                    res.hitProbabilityPercent >= 40.0 -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.error
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.5.dp, hitColor.copy(alpha = 0.75f)),
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            Column {
+                                Text(
+                                    text = "ESTIMATED FIRST-ROUND P(HIT)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = res?.let { String.format(Locale.US, "%.0f%%", it.hitProbabilityPercent) } ?: "…",
+                                    style = MaterialTheme.typography.displaySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = hitColor
+                                )
+                            }
+                            if (res != null) {
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = "${String.format(Locale.US, "%.1f", res.targetDiameterInches)}\" Circular Plate",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Dominant: ${res.dominantErrorSource}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary
+                                    )
+                                }
+                            }
+                        }
+                        if (res != null) {
+                            Text(
+                                text = String.format(
+                                    Locale.US,
+                                    "Total 1σ Dispersion: Vert ±%.1f\" • Horiz ±%.1f\"",
+                                    res.sigmaVerticalInches,
+                                    res.sigmaHorizontalInches
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            val breakdown = listOf(
+                                "Wind" to res.sigmaWindInches,
+                                "Range" to res.sigmaRangeInches,
+                                "MV SD" to res.sigmaMvInches,
+                                "BC" to res.sigmaBcInches,
+                                "Rifle 1σ" to res.sigmaSystemInches
+                            )
+                            val maxSigma = breakdown.maxOf { it.second }.coerceAtLeast(0.1)
+                            breakdown.forEach { (label, sigIn) ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.width(54.dp)
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth((sigIn / maxSigma).toFloat().coerceIn(0.02f, 1f))
+                                                .fillMaxHeight()
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(if (label == res.dominantErrorSource) hitColor else MaterialTheme.colorScheme.primary.copy(alpha = 0.7f))
+                                        )
+                                    }
+                                    Text(
+                                        text = String.format(Locale.US, "±%.1f\"", sigIn),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.width(42.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Target Plate Size
+                Text("Target Plate Diameter (inches)", style = MaterialTheme.typography.labelMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("4", "6", "10", "18", "24").forEach { sz ->
+                        FilterChip(
+                            selected = plateDiaText == sz,
+                            onClick = { plateDiaText = sz },
+                            label = { Text("$sz\"") }
+                        )
+                    }
+                }
+
+                // Uncertainty Inputs (1-sigma)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = mvSdText,
+                        onValueChange = { mvSdText = it },
+                        label = { Text("MV SD (fps)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = windErrText,
+                        onValueChange = { windErrText = it },
+                        label = { Text("Wind ± (mph)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = rangeErrText,
+                        onValueChange = { rangeErrText = it },
+                        label = { Text("Range ± (yd)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = bcErrText,
+                        onValueChange = { bcErrText = it },
+                        label = { Text("BC ± (%)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = sysMoaText,
+                        onValueChange = { sysMoaText = it },
+                        label = { Text("Rifle 1σ (MOA)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = plateDiaText,
+                        onValueChange = { plateDiaText = it },
+                        label = { Text("Plate (in)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Model Explanation Toggle
+                Surface(
+                    onClick = { showModelInfo = !showModelInfo },
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = if (showModelInfo) "Hide Model Explanation ▲" else "How This Hit-Probability Model Works ▼",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (showModelInfo) {
+                            Text(
+                                text = "Gunnies perturbs your active 3-DOF+ trajectory by ±1σ for each independent input (MV SD, crosswind call error, range error relative to your dialed line of sight, and BC/drag %), combines their variances with Rifle/Shooter 1σ (0.35 MOA ≈ 0.8–1.0 MOA 5-shot group), and integrates the resulting 2D elliptical Gaussian over your circular plate. Assumes centered zero (no mean bias) and independent errors.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) { Text("Done") }
+        }
     )
 }
