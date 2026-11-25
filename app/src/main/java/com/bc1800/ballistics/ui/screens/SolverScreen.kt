@@ -254,7 +254,7 @@ fun SolverScreen(
                             scope = activeScope,
                             solution = sol,
                             isNightRed = isNightRed,
-                            initiallyExpanded = false,
+                            initiallyExpanded = true,
                             onChangeScopeReticle = { newReticle ->
                                 viewModel.saveScope(activeScope.copy(reticleType = newReticle))
                             }
