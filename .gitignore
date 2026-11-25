@@ -1,0 +1,28 @@
+# OS & IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Build outputs
+build/
+dist/
+out/
+.gradle/
+.kotlin/
+captures/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.jks
+*.keystore
+*.hprof
+*.log
+
+# Node / Flutter
+node_modules/
+.dart_tool/
