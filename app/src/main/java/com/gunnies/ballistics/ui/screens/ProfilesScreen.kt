@@ -1,5 +1,7 @@
 package com.gunnies.ballistics.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -68,18 +71,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gunnies.ballistics.R
 import com.gunnies.ballistics.data.BallisticsCatalog
+import com.gunnies.ballistics.data.CustomDragCurveCodec
+import com.gunnies.ballistics.data.ImportedProfileBundle
+import com.gunnies.ballistics.data.ProfileImportCodec
 import com.gunnies.ballistics.data.UnitFormatters
 import com.gunnies.ballistics.model.AmmoCategory
 import com.gunnies.ballistics.model.AmmoLoad
 import com.gunnies.ballistics.model.AppThemeMode
 import com.gunnies.ballistics.model.BcBand
 import com.gunnies.ballistics.model.ClickUnit
+import com.gunnies.ballistics.model.CustomDragCurve
 import com.gunnies.ballistics.model.DragModel
 import com.gunnies.ballistics.model.FirearmCategory
 import com.gunnies.ballistics.model.FirearmSetup
@@ -170,6 +178,27 @@ fun ProfilesScreen(
         }
     }
 
+    var pendingProfileImport by remember { mutableStateOf<ImportedProfileBundle?>(null) }
+    var profileImportError by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
+
+    val profileImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val text = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: error("Unable to read selected file.")
+                ProfileImportCodec.parse(text, uri.lastPathSegment).getOrThrow()
+            }.onSuccess { bundle ->
+                profileImportError = null
+                pendingProfileImport = bundle
+            }.onFailure { err ->
+                profileImportError = err.message ?: "Unable to parse profile file."
+            }
+        }
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWide = maxWidth >= 600.dp
         val columns = if (isWide) 2 else 1
@@ -218,29 +247,56 @@ fun ProfilesScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary
                                 )
-                                Surface(
-                                    onClick = { showRangefinderHelp = true },
-                                    color = MaterialTheme.colorScheme.surface,
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                                    shape = RoundedCornerShape(999.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        onClick = { profileImportLauncher.launch(arrayOf("*/*")) },
+                                        color = MaterialTheme.colorScheme.surface,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                        shape = RoundedCornerShape(999.dp)
                                     ) {
-                                        Icon(
-                                            Icons.AutoMirrored.Filled.HelpOutline,
-                                            contentDescription = "Rangefinder Help",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Text(
-                                            text = "Help",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.FileUpload,
+                                                contentDescription = "Import Strelok Profile",
+                                                tint = MaterialTheme.colorScheme.secondary,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(
+                                                text = "Import",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.secondary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                    Surface(
+                                        onClick = { showRangefinderHelp = true },
+                                        color = MaterialTheme.colorScheme.surface,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                        shape = RoundedCornerShape(999.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.HelpOutline,
+                                                contentDescription = "Rangefinder Help",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = "Help",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -534,13 +590,18 @@ fun ProfilesScreen(
                             val tempNote = if (kotlin.math.abs(ammo.mvTempSensitivityFpsPerF) > 0.01) {
                                 String.format(Locale.US, " • %.2f fps/°F", ammo.mvTempSensitivityFpsPerF)
                             } else ""
-                            val multiBcNote = if (ammo.bcBands.isNotEmpty()) " • ${ammo.bcBands.size}-Band BC" else ""
+                            val multiBcNote = if (ammo.dragModel != DragModel.CUSTOM && ammo.bcBands.isNotEmpty()) " • ${ammo.bcBands.size}-Band BC" else ""
                             val dsfNote = if (ammo.dsfTable.isNotEmpty()) " • DSF(${ammo.dsfTable.size})" else ""
+                            val dragBadge = if (ammo.usesCustomDragCurve()) {
+                                "Custom Cd (${ammo.customDragCurve?.points?.size ?: 0}pt)"
+                            } else {
+                                "${ammo.dragModel.label} ${String.format(Locale.US, "%.3f", ammo.primaryBc())}"
+                            }
                             ArsenalItemCard(
                                 title = ammo.name,
-                                subtitle = "${ammo.category.label} • ${ammo.caliber} • ${ammo.dragModel.label} ${
-                                    String.format(Locale.US, "%.3f", ammo.primaryBc())
-                                } • ${UnitFormatters.formatVelocity(ammo.muzzleVelocityFps, uiState.preferences.velocityUnit)}$multiBcNote$dsfNote$tempNote",
+                                subtitle = "${ammo.category.label} • ${ammo.caliber} • $dragBadge • ${
+                                    UnitFormatters.formatVelocity(ammo.muzzleVelocityFps, uiState.preferences.velocityUnit)
+                                }$multiBcNote$dsfNote$tempNote",
                                 notes = ammo.notes,
                                 isActive = isActive,
                                 isFavorite = ammo.isFavorite,
@@ -838,6 +899,92 @@ fun ProfilesScreen(
                 pendingDeleteSuppressor = null
             },
             onDismiss = { pendingDeleteSuppressor = null }
+        )
+    }
+
+    pendingProfileImport?.let { bundle ->
+        AlertDialog(
+            onDismissRequest = { pendingProfileImport = null },
+            title = { Text("Import Profile (${bundle.sourceFormat})") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Review parsed rig components before adding them to My Arsenal and activating them:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    bundle.firearm?.let { f ->
+                        Text(
+                            text = "Firearm: ${f.name} (${f.caliberHint}, 1:${String.format(Locale.US, "%.1f", f.barrelTwistInches)}\" ${f.twistDirection.label})",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    bundle.scope?.let { s ->
+                        Text(
+                            text = "Scope: ${s.name} (Zero ${s.zeroRangeYards.toInt()} yd, SH ${String.format(Locale.US, "%.2f", s.sightHeightInches)}\", ${s.clickUnit.label})",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    bundle.ammo?.let { a ->
+                        val bandSuffix = if (a.bcBands.isNotEmpty()) " (${a.bcBands.size}-Band BC)" else ""
+                        Text(
+                            text = "Ammo: ${a.name} (${a.dragModel.label} ${String.format(Locale.US, "%.3f", a.primaryBc())}$bandSuffix, ${a.muzzleVelocityFps.toInt()} fps, ${a.bulletWeightGrains.toInt()} gr)",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    if (bundle.warnings.isNotEmpty()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Import Notes",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                bundle.warnings.forEach { warn ->
+                                    Text(
+                                        text = "• $warn",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.importExternalProfile(bundle)
+                    pendingProfileImport = null
+                }) { Text("Import to My Arsenal") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingProfileImport = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    profileImportError?.let { err ->
+        AlertDialog(
+            onDismissRequest = { profileImportError = null },
+            title = { Text("Profile Import Failed") },
+            text = { Text(err, style = MaterialTheme.typography.bodySmall) },
+            confirmButton = {
+                Button(onClick = { profileImportError = null }) { Text("OK") }
+            }
         )
     }
 }
@@ -1326,6 +1473,63 @@ private fun AmmoEditorDialog(
         )
     }
     var errorText by remember { mutableStateOf<String?>(null) }
+    var customCurve by remember { mutableStateOf(initial.customDragCurve) }
+    var curveStatusMsg by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
+
+    val importCurveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                val text = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: error("Could not open selected drag curve file.")
+                CustomDragCurveCodec.parse(text, uri.lastPathSegment).getOrThrow()
+            }.onSuccess { parsed ->
+                customCurve = parsed
+                dragModel = DragModel.CUSTOM
+                curveStatusMsg = "Loaded ${parsed.name} (${parsed.points.size} Mach/Cd knots)"
+                errorText = null
+            }.onFailure { err ->
+                curveStatusMsg = null
+                errorText = err.message ?: "Invalid custom drag curve file."
+            }
+        }
+    }
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val c = customCurve
+        if (uri != null && c != null) {
+            runCatching {
+                ctx.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                    it.write(CustomDragCurveCodec.exportJson(c))
+                }
+            }.onSuccess {
+                curveStatusMsg = "Exported ${c.name} as JSON"
+            }.onFailure {
+                errorText = "Export failed: ${it.message}"
+            }
+        }
+    }
+
+    val exportCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        val c = customCurve
+        if (uri != null && c != null) {
+            runCatching {
+                ctx.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use {
+                    it.write(CustomDragCurveCodec.exportCsv(c))
+                }
+            }.onSuccess {
+                curveStatusMsg = "Exported ${c.name} as CSV"
+            }.onFailure {
+                errorText = "Export failed: ${it.message}"
+            }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1369,6 +1573,68 @@ private fun AmmoEditorDialog(
                             onClick = { dragModel = dm },
                             label = { Text(dm.label) }
                         )
+                    }
+                }
+                if (dragModel == DragModel.CUSTOM) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)),
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Custom Cd(Mach) Drag Table",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            val activeCurve = customCurve
+                            Text(
+                                text = if (activeCurve != null && activeCurve.isValid()) {
+                                    val minM = activeCurve.points.minOf { it.mach }
+                                    val maxM = activeCurve.points.maxOf { it.mach }
+                                    "${activeCurve.name} • ${activeCurve.points.size} knots (M${String.format(Locale.US, "%.2f", minM)}–M${String.format(Locale.US, "%.2f", maxM)})" +
+                                        if (activeCurve.source.isNotBlank()) "\nSource: ${activeCurve.source}" else ""
+                                } else {
+                                    "No curve loaded yet. Import a JSON/CSV Cd-vs-Mach table or load a starter template."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                                OutlinedButton(
+                                    onClick = { importCurveLauncher.launch(arrayOf("*/*")) },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) { Text("Import JSON/CSV", style = MaterialTheme.typography.labelSmall) }
+                                OutlinedButton(
+                                    onClick = {
+                                        val tpl = CustomDragCurveCodec.buildTemplateCurve(DragModel.G7, "${name.ifBlank { "Custom" }} G7 Template")
+                                        customCurve = tpl
+                                        curveStatusMsg = "Loaded ${tpl.points.size}-knot G7 template"
+                                        errorText = null
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) { Text("Load Template", style = MaterialTheme.typography.labelSmall) }
+                            }
+                            if (activeCurve != null && activeCurve.isValid()) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(
+                                        onClick = { exportJsonLauncher.launch("${name.ifBlank { "custom_curve" }.lowercase().replace(Regex("[^a-z0-9]+"), "_")}.json") },
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("Export JSON", style = MaterialTheme.typography.labelSmall) }
+                                    TextButton(
+                                        onClick = { exportCsvLauncher.launch("${name.ifBlank { "custom_curve" }.lowercase().replace(Regex("[^a-z0-9]+"), "_")}.csv") },
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("Export CSV", style = MaterialTheme.typography.labelSmall) }
+                                }
+                            }
+                            curveStatusMsg?.let { msg ->
+                                Text(msg, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                            }
+                        }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1586,6 +1852,8 @@ private fun AmmoEditorDialog(
                     bulletLen.isNotBlank() && (parsedLen == null || parsedLen !in 0.1..3.5) ->
                         errorText = "Bullet length must be 0.1–3.5 in or blank."
                     invalidBand -> errorText = "Each Multi-BC row needs valid Min fps (>=0) and BC (0.02–2.0)."
+                    dragModel == DragModel.CUSTOM && (customCurve == null || !customCurve!!.isValid()) ->
+                        errorText = "Import a valid Custom Cd(Mach) JSON/CSV table (at least 2 points) or load a template."
                     else -> onSave(
                         initial.copy(
                             name = name.trim(),
@@ -1594,6 +1862,7 @@ private fun AmmoEditorDialog(
                             dragModel = dragModel,
                             ballisticCoefficient = parsedBands.firstOrNull()?.bc ?: parsedBc,
                             bcBands = parsedBands,
+                            customDragCurve = customCurve,
                             muzzleVelocityFps = parsedMv,
                             bulletWeightGrains = parsedWt,
                             bulletDiameterInches = parsedDia,

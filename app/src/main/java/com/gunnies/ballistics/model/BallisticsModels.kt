@@ -6,7 +6,8 @@ import java.util.UUID
 @Serializable
 enum class DragModel(val label: String) {
     G1("G1"),
-    G7("G7")
+    G7("G7"),
+    CUSTOM("Custom Cd")
 }
 
 @Serializable
@@ -150,9 +151,31 @@ data class DsfPoint(
 )
 
 /**
+ * Single Mach-to-Cd point for a user-supplied custom drag curve.
+ */
+@Serializable
+data class DragCurvePoint(
+    val mach: Double,
+    val cd: Double
+)
+
+/**
+ * Custom Cd-vs-Mach drag table attached to an [AmmoLoad].
+ * Evaluated directly using projectile sectional density (form factor i = 1.0).
+ */
+@Serializable
+data class CustomDragCurve(
+    val name: String = "",
+    val source: String = "",
+    val points: List<DragCurvePoint> = emptyList()
+) {
+    fun isValid(): Boolean = points.size >= 2
+}
+
+/**
  * Independent Ammunition / Bullet load (category, caliber, drag model, BC, optional stepped
- * multi-BC velocity bands, transonic/subsonic DSF table, MV, weight, diameter, bullet length,
- * powder temperature sensitivity, favorite flag).
+ * multi-BC velocity bands, optional custom Cd-vs-Mach curve, transonic/subsonic DSF table,
+ * MV, weight, diameter, bullet length, powder temperature sensitivity, favorite flag).
  */
 @Serializable
 data class AmmoLoad(
@@ -171,13 +194,18 @@ data class AmmoLoad(
     val isFavorite: Boolean = false,
     val notes: String = "",
     val bcBands: List<BcBand> = emptyList(),
-    val dsfTable: List<DsfPoint> = emptyList()
+    val dsfTable: List<DsfPoint> = emptyList(),
+    val customDragCurve: CustomDragCurve? = null
 ) {
     /** Primary (highest-velocity) BC used for single-BC summaries and LBC1800 :BP sync. */
     fun primaryBc(): Double {
         val valid = bcBands.filter { it.bc in 0.01..2.0 }
         return valid.maxByOrNull { it.minVelocityFps }?.bc ?: ballisticCoefficient
     }
+
+    /** True when this load is actively configured to integrate with a valid custom Cd(Mach) curve. */
+    fun usesCustomDragCurve(): Boolean =
+        dragModel == DragModel.CUSTOM && customDragCurve?.isValid() == true
 }
 
 /**
@@ -240,12 +268,24 @@ data class RifleProfile(
     val zeroHumidityPercent: Double = 50.0,
     val notes: String = "",
     val bcBands: List<BcBand> = emptyList(),
-    val dsfTable: List<DsfPoint> = emptyList()
+    val dsfTable: List<DsfPoint> = emptyList(),
+    val customDragCurve: CustomDragCurve? = null
 ) {
     /** Primary (highest-velocity) BC for LBC1800 :BP serialization and single-BC fallback. */
     fun primaryBc(): Double {
         val valid = bcBands.filter { it.bc in 0.01..2.0 }
         return valid.maxByOrNull { it.minVelocityFps }?.bc ?: ballisticCoefficient
+    }
+
+    /** True when this profile uses a valid custom Cd-vs-Mach drag curve. */
+    fun usesCustomDragCurve(): Boolean =
+        dragModel == DragModel.CUSTOM && customDragCurve?.isValid() == true
+
+    /** Compact HUD badge label identifying the active drag model. */
+    fun activeDragModelHudLabel(): String = when {
+        usesCustomDragCurve() -> "Custom Cd"
+        bcBands.isNotEmpty() -> "${dragModel.label} • ${bcBands.size}-BC"
+        else -> dragModel.label
     }
 
     companion object {
@@ -266,6 +306,7 @@ data class RifleProfile(
             ballisticCoefficient = ammo.primaryBc(),
             bcBands = ammo.bcBands,
             dsfTable = ammo.dsfTable,
+            customDragCurve = ammo.customDragCurve,
             muzzleVelocityFps = (ammo.muzzleVelocityFps + (suppressor?.mvShiftFps ?: 0.0)).coerceAtLeast(100.0),
             bulletWeightGrains = ammo.bulletWeightGrains,
             bulletDiameterInches = ammo.bulletDiameterInches,

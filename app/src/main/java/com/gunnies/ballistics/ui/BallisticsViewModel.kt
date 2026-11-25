@@ -949,6 +949,24 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** Non-destructively imports an external Strelok-style profile bundle into My Arsenal and activates it. */
+    fun importExternalProfile(bundle: com.gunnies.ballistics.data.ImportedProfileBundle) {
+        viewModelScope.launch {
+            repository.saveFirearm(bundle.firearm)
+            repository.saveScope(bundle.scope)
+            repository.saveAmmo(bundle.ammo)
+            repository.updatePreferences { prefs ->
+                prefs.copy(
+                    activeFirearmId = bundle.firearm.id,
+                    activeScopeId = bundle.scope.id,
+                    activeAmmoId = bundle.ammo.id,
+                    firearmAmmoMemory = prefs.firearmAmmoMemory + (bundle.firearm.id to bundle.ammo.id)
+                )
+            }
+            showMessage("Imported ${bundle.firearm.name} + ${bundle.ammo.name}")
+        }
+    }
+
     // --- Suppressor Management ---
 
     fun selectActiveSuppressor(suppressorId: String?) {

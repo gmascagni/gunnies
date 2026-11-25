@@ -32,7 +32,7 @@ The simplest way to install Gunnies Ballistics on Android (**Android 8.0 / API 2
 ## Features (Verified Against App Code)
 
 - **3-DOF+ RK4 Ballistics Engine** (`BallisticEngine.kt`, `DragTables.kt`)
-  - Standard BRL/JBM **G1 and G7** drag curves (`Mach 0.00–5.00`).
+  - Standard BRL/JBM **G1 and G7** drag curves (`Mach 0.00–5.00`) plus **Custom `Cd(Mach)` Drag Tables** per ammo load (JSON and CSV import/export; see [schema documentation](docs/schemas/custom-drag-curve.md)) with an active drag-model indicator on the Solver HUD.
   - **Stepped Multi-BC:** Up to **5 velocity-to-BC bands** per ammo load in the UI with smooth ±20 fps blending across boundaries.
   - **Two-Stage Ballistic Calibration (Truing):** Stage 1 supersonic **Muzzle Velocity (MV)** truing and Stage 2 transonic/subsonic **Drop Scale Factor (DSF)** truing at `Mach ≤ 1.20` (up to 6 Mach calibration nodes).
   - **3-Zone Wind Banding** (Near `0–33%`, Mid `33–66%`, Far `66–100%`) plus **Single Wind**, **Wind Gust Bracket**, 3D inclined-fire wind & gravity decomposition, and **Moving Target Lead (Mover)**.
@@ -47,9 +47,10 @@ The simplest way to install Gunnies Ballistics on Android (**Android 8.0 / API 2
   - Create, reorder, save, and share custom stage cards with up to **10 targets per stage** (independent distance, inclination angle, wind override, and mover speed per target; includes 3 starter stage cards).
 - **Cold-Bore & Session DOPE Logbook** (`LogbookModal.kt`)
   - One-tap shot logging from the Solver HUD recording timestamp, active rig, atmospheric snapshot, target range, predicted vs. actual elevation/wind, and a **Cold Bore** flag.
-- **Modular Arsenal & 379-Item Built-In Database** (`BallisticsCatalog.kt`, `ProfilesScreen.kt`)
+- **Modular Arsenal, 389-Item Built-In Database & Profile Import** (`BallisticsCatalog.kt`, `ProfilesScreen.kt`, `ProfileImportCodec.kt`)
   - Independent **Guns**, **Scopes**, **Ammo**, and **Suppressors** tabs with Favorites (`★`), inline **My Arsenal | Database** browsing, **Unsuppressed** 1-tap toggle, and optional Auto-Match Scope Unit (`MOA`/`MRAD`).
-  - Built-in database contains **379 profiles**: **115 firearms**, **86 scopes**, **114 ammo loads**, and **64 suppressors** (plus pre-populated starter arsenal defaults: 7 firearms, 6 scopes, 13 ammo loads, 2 suppressors).
+  - Built-in database contains **389 profiles**: **115 firearms**, **86 scopes**, **124 ammo loads** (including attributed manufacturer-published rimfire, subsonic, and precision loads), and **64 suppressors** (plus pre-populated starter arsenal defaults: 7 firearms, 6 scopes, 13 ammo loads, 2 suppressors).
+  - **External Profile Import:** Import Strelok-style rifle/scope/ammo profiles from XML, JSON, `.srl`/`.txt` key=value, or CSV files directly into My Arsenal with review preview and warnings.
 - **Full Arsenal JSON Backup & Restore** (`ArsenalBackupCodec.kt`)
   - Versioned `.json` export and import via Android's Storage Access Framework with **Merge** or **Overwrite** modes (includes firearms, scopes, ammo with Multi-BC & DSF tables, suppressors, stage cards, session logs, and preferences).
 - **Live GPS Weather & Offline Operation** (`WeatherService.kt`, `WeatherScreen.kt`)
@@ -72,7 +73,7 @@ The **"+"** denotes rotational, Earth-frame, and calibration terms layered onto 
 
 | Component | Implementation in Code | When It Applies |
 | :--- | :--- | :--- |
-| **Drag Curves** | BRL/JBM **G1** (79 Mach/Cd knots, `Mach 0.00–5.00`, omitting the non-existent `0.65` G1 knot) and **G7** (80 knots, `Mach 0.00–5.00`) via binary-search linear interpolation (`DragTables.kt`). | Every trajectory solve and zero-angle solve. |
+| **Drag Curves** | BRL/JBM **G1** (79 Mach/Cd knots, `Mach 0.00–5.00`, omitting the non-existent `0.65` G1 knot), **G7** (80 knots, `Mach 0.00–5.00`), and **Custom `Cd(Mach)`** tables (2–128 knots per ammo load, evaluated against sectional density `SD = (weight_gr / 7000) / d_in²` with form factor `i = 1.0`) via binary-search linear interpolation (`DragTables.kt`, `BallisticEngine.kt`). | Every trajectory solve and zero-angle solve. |
 | **Velocity-Banded Multi-BC** | Up to 5 `BcBand(minVelocityFps, bc)` pairs in UI (up to 8 packed in primitive arrays inside `BallisticEngine`). Evaluated from relative airspeed `vRel` at every RK4 sub-step with a smooth **±20 fps linear ramp** (`BC_BLEND_HALF_FPS = 20.0`) across band boundaries. | Whenever `AmmoLoad.bcBands` is non-empty; otherwise uses single `ballisticCoefficient`. |
 | **Atmosphere & Air State** | Station pressure directly (`pressureIsStation = true`) or ICAO barometric conversion `P * (1 - 6.8755856e-6 * altFt)^5.25588`. Humid air density splits dry air (`Rd = 287.058`) and water vapor (`Rv = 461.495`, Tetens saturation vapor pressure) relative to ICAO `1.2250 kg/m³`. Speed of sound includes humidity term `1 + 0.14 * (Pv / P)`. | Every solve and zero-angle calculation (zeroing uses `zeroTempF`, `zeroPressureInHg`, `zeroHumidityPercent`). |
 | **Powder Temp & Suppressor Shift** | `effectiveMV = (ammoMV + suppressor.mvShiftFps) + (tempF - chronoTempF) * mvTempSensitivityFpsPerF` (clamped `50–6000 fps`). Suppressor vertical/horizontal POI shifts add to scope zero offsets. | Always applied when non-zero. |
@@ -168,8 +169,10 @@ app/src/main/java/com/gunnies/ballistics/
 │   └── RangefinderBleManager.kt     # Serialized GATT queue, paced writes, telemetry parser
 ├── data/
 │   ├── ArsenalBackupCodec.kt        # Versioned JSON Arsenal export/import codec (Merge / Overwrite)
-│   ├── BallisticsCatalog.kt         # 379-item built-in firearms, scopes, ammo & suppressors database
+│   ├── BallisticsCatalog.kt         # 389-item built-in firearms, scopes, ammo & suppressors database
 │   ├── BallisticsRepository.kt      # Jetpack DataStore persistence & non-destructive arsenal merge
+│   ├── CustomDragCurveCodec.kt      # JSON (schema v1) & CSV Custom Cd(Mach) import/export & validation
+│   ├── ProfileImportCodec.kt        # Strelok-style XML/JSON/key=value/CSV rifle/scope/ammo importer
 │   ├── UnitFormatters.kt            # MOA/MRAD/Clicks/Velocity/Distance/Pressure/Wind formatting
 │   └── WeatherService.kt            # GPS location lookup + Open-Meteo atmospheric & wind fetch
 ├── engine/
@@ -200,7 +203,8 @@ app/src/main/java/com/gunnies/ballistics/
 ```powershell
 .\gradlew.bat testDebugUnitTest
 ```
-Includes **27 unit tests** across:
+Includes **33 unit tests** across:
 - `BallisticEngineTest` (**19 tests**): G1/G7 table alignment, 3D inclined wind, 3-zone wind banding, stepped Multi-BC smooth blending, DSF interpolation & truing, Coriolis, aero jump, MV truing, MPBR, single-pass DOPE consistency, JSON backup codec, catalog counts.
 - `BallisticValidationTest` (**1 multi-fixture suite / 8 external benchmarks**): compares Gunnies against live-captured reference tables from Berger (Bryan Litz G1/G7) and ShootersCalculator across `.22 LR` subsonic, `.223 Rem`, `.308 Win`, `6.5 Creedmoor`, `.300 Win Mag`, and `1,200 yd` high-altitude `+15°` inclined fire. See **[VALIDATION.md](VALIDATION.md)** for full tables, tolerances, and deviation notes.
+- `CustomDragAndImportTest` (**6 tests**): Custom `Cd(Mach)` equivalence against G7 (`< 0.015 MOA` at 1,000 yd), JSON/CSV round-trip & validation errors, LBC1800 safe drag-model fallback, Strelok XML/key=value/CSV profile import, and attributed manufacturer catalog verification.
 - `Lbc1800ProtocolTest` (**7 tests**): XOR checksum verification, HDLC chunked deframing, `:BP` / `:AV` frame encoding, primary BC & range-weighted average wind serialization.

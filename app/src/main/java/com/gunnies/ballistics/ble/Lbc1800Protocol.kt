@@ -213,7 +213,12 @@ object Lbc1800Protocol {
         moverSpeedMph: Double = 0.0
     ): String {
         val bc = String.format(Locale.US, "%.3f", profile.primaryBc().coerceIn(0.01, 2.0))
-        val dragIdx = if (profile.dragModel == DragModel.G7) "00001" else "00000"
+        // LBC1800 hardware only supports G1 (00000) or G7 (00001); fall back cleanly for Custom Cd loads
+        val dragIdx = when (profile.dragModel) {
+            DragModel.G7 -> "00001"
+            DragModel.G1 -> "00000"
+            DragModel.CUSTOM -> if (profile.primaryBc() >= 0.20) "00001" else "00000"
+        }
         val weight = String.format(Locale.US, "%05d", profile.bulletWeightGrains.roundToInt().coerceIn(1, 99999))
         val dia = String.format(Locale.US, "%.3f", profile.bulletDiameterInches.coerceIn(0.1, 1.0))
         val lenStr = String.format(Locale.US, "%.3f", BallisticEngine.estimateBulletLengthInches(profile))

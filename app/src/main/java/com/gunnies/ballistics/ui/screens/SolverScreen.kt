@@ -510,6 +510,36 @@ private fun FiringSolutionPanel(
                             )
                         }
                     }
+                    // Compact Active Drag Model Badge (G1 / G7 / Multi-BC / Custom Cd)
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (active.usesCustomDragCurve()) {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (active.usesCustomDragCurve()) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.outlineVariant
+                            }
+                        )
+                    ) {
+                        Text(
+                            text = active.activeDragModelHudLabel(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (active.usesCustomDragCurve()) {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        )
+                    }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {

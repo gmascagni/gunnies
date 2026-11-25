@@ -3,6 +3,7 @@ package com.gunnies.ballistics.engine
 import com.gunnies.ballistics.model.Atmosphere
 import com.gunnies.ballistics.model.BallisticSolution
 import com.gunnies.ballistics.model.BcBand
+import com.gunnies.ballistics.model.CustomDragCurve
 import com.gunnies.ballistics.model.DistanceUnit
 import com.gunnies.ballistics.model.DragModel
 import com.gunnies.ballistics.model.DsfPoint
@@ -234,6 +235,57 @@ object BallisticEngine {
         return count
     }
 
+    /** Packs a [CustomDragCurve] into primitive arrays (sorted ascending by Mach) for zero-alloc RK4 lookup. */
+    private fun packCustomDragCurve(
+        curve: CustomDragCurve?,
+        outMachs: DoubleArray,
+        outCds: DoubleArray
+    ): Int {
+        if (curve == null || curve.points.size < 2) return 0
+        val sorted = curve.points
+            .filter { it.mach in 0.0..5.0 && it.cd in 0.01..3.0 }
+            .sortedBy { it.mach }
+        if (sorted.size < 2) return 0
+        val count = sorted.size.coerceAtMost(outMachs.size)
+        for (i in 0 until count) {
+            outMachs[i] = sorted[i].mach
+            outCds[i] = sorted[i].cd
+        }
+        return count
+    }
+
+    /** Zero-allocation binary-search linear interpolation on a custom Cd(Mach) table. */
+    private fun evalCustomCd(
+        mach: Double,
+        machs: DoubleArray,
+        cds: DoubleArray,
+        count: Int
+    ): Double {
+        if (mach <= machs[0]) return cds[0]
+        val last = count - 1
+        if (mach >= machs[last]) return cds[last]
+
+        var low = 0
+        var high = last
+        while (low + 1 < high) {
+            val mid = (low + high) ushr 1
+            if (machs[mid] <= mach) low = mid else high = mid
+        }
+        val m0 = machs[low]
+        val m1 = machs[high]
+        val span = m1 - m0
+        if (span < 1e-9) return cds[low]
+        val frac = (mach - m0) / span
+        return cds[low] + frac * (cds[high] - cds[low])
+    }
+
+    /** Sectional density SD = (weight_gr / 7000) / diameter_in^2, used as divisor for physical Cd(Mach) curves. */
+    fun computeSectionalDensity(profile: RifleProfile): Double {
+        val d = profile.bulletDiameterInches.coerceIn(0.14, 0.75)
+        val wtLb = profile.bulletWeightGrains.coerceAtLeast(5.0) / GRAINS_PER_LB
+        return (wtLb / (d * d)).coerceAtLeast(0.01)
+    }
+
     /**
      * Merges a newly calibrated DSF node into an existing table (replacing any node within 0.05 Mach)
      * and returns the updated table sorted ascending by Mach.
@@ -262,6 +314,13 @@ object BallisticEngine {
         val bandBcs = DoubleArray(8)
         val bandCount = packBcBands(profile.bcBands, bandVels, bandBcs)
 
+        val customMachs = DoubleArray(128)
+        val customCds = DoubleArray(128)
+        val customCount = if (profile.usesCustomDragCurve()) {
+            packCustomDragCurve(profile.customDragCurve, customMachs, customCds)
+        } else 0
+        val sectionalDensity = computeSectionalDensity(profile)
+
         val zeroAtmo = Atmosphere(
             temperatureF = profile.zeroTempF,
             pressureInHg = profile.zeroPressureInHg,
@@ -285,6 +344,10 @@ object BallisticEngine {
             bandVels = bandVels,
             bandBcs = bandBcs,
             bandCount = bandCount,
+            customMachs = customMachs,
+            customCds = customCds,
+            customCount = customCount,
+            sectionalDensity = sectionalDensity,
             dragModel = profile.dragModel,
             air = air,
             angleRad = 0.0,
@@ -305,6 +368,10 @@ object BallisticEngine {
                 bandVels = bandVels,
                 bandBcs = bandBcs,
                 bandCount = bandCount,
+                customMachs = customMachs,
+                customCds = customCds,
+                customCount = customCount,
+                sectionalDensity = sectionalDensity,
                 dragModel = profile.dragModel,
                 air = air,
                 angleRad = 0.0,
@@ -619,7 +686,7 @@ object BallisticEngine {
         val sightHeightFt = profile.sightHeightInches / 12.0
         val launchedSupersonic = (mv / air.speedOfSoundFps) >= TRANSONIC_MACH_GATE
 
-        // Pre-pack stepped Multi-BC and DSF tables into primitive arrays BEFORE the RK4 loop (0 allocations per step)
+        // Pre-pack stepped Multi-BC, DSF, and optional Custom Cd(Mach) tables BEFORE the RK4 loop (0 allocations per step)
         val bandVels = DoubleArray(8)
         val bandBcs = DoubleArray(8)
         val bandCount = packBcBands(profile.bcBands, bandVels, bandBcs)
@@ -627,6 +694,13 @@ object BallisticEngine {
         val dsfMachs = DoubleArray(8)
         val dsfVals = DoubleArray(8)
         val dsfCount = packDsfTable(profile.dsfTable, dsfMachs, dsfVals)
+
+        val customMachs = DoubleArray(128)
+        val customCds = DoubleArray(128)
+        val customCount = if (profile.usesCustomDragCurve()) {
+            packCustomDragCurve(profile.customDragCurve, customMachs, customCds)
+        } else 0
+        val sectionalDensity = computeSectionalDensity(profile)
 
         // Precompute 3-Zone OR Single-Zone horizontal wind vectors decomposed into LOS-tilted frame
         val wp = atmosphere.windProfile
@@ -737,9 +811,16 @@ object BallisticEngine {
                 return
             }
             val mach = vRel / speedOfSound
-            val cd = DragTables.getCd(dragModel, mach)
-            val activeBc = if (bandCount == 0) baseBc else lookupBc(vRel, baseBc, bandVels, bandBcs, bandCount)
-            val k = (dragAirConst / activeBc) * cd * vRel
+            val cd: Double
+            val divisor: Double
+            if (customCount >= 2) {
+                cd = evalCustomCd(mach, customMachs, customCds, customCount)
+                divisor = sectionalDensity
+            } else {
+                cd = DragTables.getCd(dragModel, mach)
+                divisor = if (bandCount == 0) baseBc else lookupBc(vRel, baseBc, bandVels, bandBcs, bandCount)
+            }
+            val k = (dragAirConst / divisor) * cd * vRel
             val ax = -k * rvx + gx
             var ay = -k * rvy + gy
             var az = -k * rvz
@@ -941,6 +1022,10 @@ object BallisticEngine {
         bandVels: DoubleArray,
         bandBcs: DoubleArray,
         bandCount: Int,
+        customMachs: DoubleArray,
+        customCds: DoubleArray,
+        customCount: Int,
+        sectionalDensity: Double,
         dragModel: DragModel,
         air: AirState,
         angleRad: Double,
@@ -977,9 +1062,17 @@ object BallisticEngine {
             if (vRel < 1e-6) {
                 dst[0] = gx; dst[1] = gy; dst[2] = 0.0; return
             }
-            val cd = DragTables.getCd(dragModel, vRel / speedOfSound)
-            val activeBc = if (bandCount == 0) baseBc else lookupBc(vRel, baseBc, bandVels, bandBcs, bandCount)
-            val k = (dragAirConst / activeBc) * cd * vRel
+            val mach = vRel / speedOfSound
+            val cd: Double
+            val divisor: Double
+            if (customCount >= 2) {
+                cd = evalCustomCd(mach, customMachs, customCds, customCount)
+                divisor = sectionalDensity
+            } else {
+                cd = DragTables.getCd(dragModel, mach)
+                divisor = if (bandCount == 0) baseBc else lookupBc(vRel, baseBc, bandVels, bandBcs, bandCount)
+            }
+            val k = (dragAirConst / divisor) * cd * vRel
             dst[0] = -k * rvx + gx
             dst[1] = -k * rvy + gy
             dst[2] = -k * rvz
