@@ -6,11 +6,11 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#090B0D">
   <title>Gunnies Ballistics — 3-DOF+ Precision Ballistics Solver for Android</title>
-  <meta name="description" content="Android 3-DOF+ precision ballistics solver with 379 built-in profiles, G1/G7 drag curves, 5-band Multi-BC, MV &amp; DSF truing, 3-zone wind, 7 scope-matched reticles, 10-target PRS stage cards, and optional Bushnell LBC1800 Bluetooth sync.">
+  <meta name="description" content="Android 3-DOF+ precision ballistics solver with 389 built-in profiles, G1/G7 &amp; Custom Cd drag curves, 5-band Multi-BC, multi-point MV/BC &amp; DSF truing, 3-zone wind, 7 scope-matched reticles, 10-target PRS stage cards, and optional Bushnell LBC1800 Bluetooth sync.">
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="Gunnies Ballistics — Precision Built for the Field">
-  <meta property="og:description" content="3-DOF+ Android ballistics solver with 379 built-in profiles, velocity-banded BCs, MV &amp; DSF truing, 3-zone wind, 7 reticles, PRS stage cards, and DOPE tables.">
+  <meta property="og:description" content="3-DOF+ Android ballistics solver with 389 built-in profiles, velocity-banded BCs, Custom Cd curves, multi-point MV/BC &amp; DSF truing, 3-zone wind, 7 reticles, PRS stage cards, and DOPE tables.">
   <meta property="og:image" content="assets/poster-16x9.jpg">
 
   <link rel="icon" type="image/png" href="assets/favicon.png">
@@ -58,7 +58,7 @@
             <span class="text-accent">FOR THE FIELD.</span>
           </h1>
           <p class="hero-lead">
-            Real-time elevation and windage solutions, 379 built-in gun, scope, ammo, and suppressor profiles, 3-zone wind banding, 7 scope-matched reticles, and 10-target PRS stage cards—running offline on Android 8.0+ with optional GPS weather sync.
+            Real-time elevation and windage solutions, 389 built-in gun, scope, ammo, and suppressor profiles, 3-zone wind banding, 7 scope-matched reticles, and 10-target PRS stage cards—running offline on Android 8.0+ with optional GPS weather sync.
           </p>
 
           <div class="hero-cta">
@@ -74,7 +74,7 @@
           <dl class="telemetry-bar" aria-label="Key verified app specifications">
             <div>
               <dt>Built-in Database</dt>
-              <dd>379 Profiles</dd>
+              <dd>389 Profiles</dd>
             </div>
             <div>
               <dt>Solver Engine</dt>
@@ -186,9 +186,9 @@
             </div>
             <div class="scene-body">
               <h3>Arsenal Setup</h3>
-              <p>Combine independent Guns, Scopes, Ammo, and Suppressors profiles with Favorites and a 379-item built-in database (115 firearms, 86 scopes, 114 ammo loads, 64 suppressors).</p>
+              <p>Combine independent Guns, Scopes, Ammo, and Suppressors profiles with Favorites and a 389-item built-in database (115 firearms, 86 scopes, 124 ammo loads, 64 suppressors).</p>
               <div class="scene-actions">
-                <button type="button" class="btn-link" data-lightbox="assets/ui-arsenal.webp" data-caption="Arsenal Setup — Independent Guns, Scopes, Ammo, and Cans profiles backed by a 379-item built-in database.">Inspect Screen</button>
+                <button type="button" class="btn-link" data-lightbox="assets/ui-arsenal.webp" data-caption="Arsenal Setup — Independent Guns, Scopes, Ammo, and Cans profiles backed by a 389-item built-in database.">Inspect Screen</button>
                 <button type="button" class="btn-link accent" data-jump-video="0">Watch Clip →</button>
               </div>
             </div>
@@ -415,7 +415,15 @@
                 <th scope="col">TOF (s)</th>
               </tr>
             </thead>
-            <tbody id="dope-tbody"></tbody>
+            <tbody id="dope-tbody">
+              <tr><th scope="row">25 yd</th><td class="val-elev">D 3.89</td><td>16</td><td class="val-wind">L 0.18</td><td>693 fps</td><td>0.11s</td></tr>
+              <tr class="is-zero"><th scope="row">50 yd (ZERO)</th><td class="val-elev">0.00</td><td>0</td><td class="val-wind">L 0.34</td><td>676 fps</td><td>0.22s</td></tr>
+              <tr><th scope="row">75 yd</th><td class="val-elev">U 7.36</td><td>29</td><td class="val-wind">L 0.48</td><td>660 fps</td><td>0.33s</td></tr>
+              <tr><th scope="row">100 yd</th><td class="val-elev">U 15.81</td><td>63</td><td class="val-wind">L 0.63</td><td>644 fps</td><td>0.44s</td></tr>
+              <tr><th scope="row">125 yd</th><td class="val-elev">U 24.88</td><td>100</td><td class="val-wind">L 0.78</td><td>629 fps</td><td>0.56s</td></tr>
+              <tr><th scope="row">150 yd</th><td class="val-elev">U 34.43</td><td>138</td><td class="val-wind">L 0.93</td><td>614 fps</td><td>0.68s</td></tr>
+              <tr><th scope="row">175 yd</th><td class="val-elev">U 44.38</td><td>178</td><td class="val-wind">L 1.08</td><td>600 fps</td><td>0.81s</td></tr>
+            </tbody>
           </table>
         </div>
       </div>
@@ -530,7 +538,7 @@
     <div class="container footer-inner">
       <div class="footer-brand">
         <img src="assets/gunnies-icon-256.png" alt="" width="28" height="28" loading="lazy">
-        <span>GUNNIES BALLISTICS — Precision built for the field.</span>
+        <span>GUNNIES BALLISTICS — Always verify ballistic solutions on the range with safe live-fire testing.</span>
       </div>
       <div class="footer-links">
         <a href="#demo">Walkthrough</a>
