@@ -22,7 +22,7 @@ Designed for both standard smartphones and foldables (such as the Samsung Galaxy
 - **Live GPS Weather & Wind Clock**
   - One-tap GPS weather & elevation sync via Open-Meteo (no API key required) plus relative wind clock and manual atmospheric override.
 - **Modular Firearms, Scopes & Ammo Arsenal**
-  - Separate **Guns**, **Scopes**, and **Ammo** libraries with Favorites (`★`), built-in starter catalog (`BallisticsCatalog.kt`), per-firearm Scope/Ammo memory, and optional Auto-Match Scope Unit (`MOA`/`MRAD`).
+  - Separate **Guns**, **Scopes**, and **Ammo** libraries with Favorites (`★`), built-in starter catalog (`BallisticsCatalog.kt`), fully independent Scope selection across firearms, and optional Auto-Match Scope Unit (`MOA`/`MRAD`).
 - **Bushnell Bone Collector 1800 BLE Integration**
   - Serializes `:DU`, `:DD`, `:BP` (34-field ballistic profile + atmosphere + mover), `:AV` (6-pair powder-temp velocity table), and parses incoming laser range/angle pings cleanly.
 - **Field Themes & Text Scaling**

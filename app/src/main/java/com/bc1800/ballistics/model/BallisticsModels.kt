@@ -303,13 +303,7 @@ data class UserPreferences(
     val activeFirearmId: String = "gun-cz-457",
     val activeScopeId: String = "scope-arken-sh4-gen2",
     val activeAmmoId: String = "ammo-cci-quiet22-40",
-    /** Remembers preferred (ScopeId, AmmoId) per FirearmId so switching guns never pairs a 9mm Glock with a 16x rifle scope. */
-    val firearmScopeMemory: Map<String, String> = mapOf(
-        "gun-cz-457" to "scope-arken-sh4-gen2",
-        "gun-ruger-1022" to "scope-pa-4-14x44",
-        "gun-anderson-ar15" to "scope-ar15-optic",
-        "gun-glock-17-g4" to "scope-handgun-sights"
-    ),
+    /** Scopes stay completely independent across firearms; ammo can still be remembered per firearm. */
     val firearmAmmoMemory: Map<String, String> = mapOf(
         "gun-cz-457" to "ammo-cci-quiet22-40",
         "gun-ruger-1022" to "ammo-cci-blazer-22-40",

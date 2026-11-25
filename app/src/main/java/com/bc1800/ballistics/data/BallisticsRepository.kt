@@ -48,7 +48,7 @@ class BallisticsRepository(private val context: Context) {
     }
 
     companion object {
-        private const val CURRENT_ARSENAL_VERSION = "v6_non_destructive_precision"
+        private const val CURRENT_ARSENAL_VERSION = "v7_decoupled_scopes"
     }
 
     private val safeData: Flow<Preferences> = context.ballisticsDataStore.data
@@ -99,7 +99,18 @@ class BallisticsRepository(private val context: Context) {
 
             val existingScopes = prefs[Keys.SCOPES_JSON]?.let {
                 runCatching { json.decodeFromString<List<ScopeSetup>>(it) }.getOrNull()
-            }.orEmpty()
+            }.orEmpty().map { scope ->
+                if (scope.id == "scope-arken-sh4-gen2" && scope.name.contains("(CZ 457)")) {
+                    scope.copy(
+                        name = scope.name
+                            .replace(" (CZ 457)", "")
+                            .replace("(CZ 457)", "")
+                            .trim()
+                    )
+                } else {
+                    scope
+                }
+            }
             val existingScopeIds = existingScopes.map { it.id }.toSet()
             val mergedScopes = existingScopes + DefaultProfiles.starterScopes.filterNot { it.id in existingScopeIds }
 

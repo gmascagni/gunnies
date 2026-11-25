@@ -341,33 +341,23 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // --- Firearm Management (Remembers Scope + Ammo pairing per gun!) ---
+    // --- Firearm Management (Scopes remain independent across guns) ---
 
     fun selectActiveFirearm(firearmId: String) {
         viewModelScope.launch {
             val current = uiState.value
             val targetGun = current.firearms.firstOrNull { it.id == firearmId } ?: return@launch
-            val remScopeId = current.preferences.firearmScopeMemory[firearmId]
-                ?.takeIf { id -> current.scopes.any { it.id == id } }
             val remAmmoId = current.preferences.firearmAmmoMemory[firearmId]
                 ?.takeIf { id -> current.ammoLoads.any { it.id == id } }
 
             repository.updatePreferences { prefs ->
-                val nextScopeId = remScopeId ?: prefs.activeScopeId
                 val nextAmmoId = remAmmoId ?: prefs.activeAmmoId
-                val nextScope = current.scopes.firstOrNull { it.id == nextScopeId }
-                val matchedUnit = if (prefs.autoMatchScopeUnit && nextScope != null) {
-                    if (nextScope.clickUnit.isMrad) AngularUnit.MRAD else AngularUnit.MOA
-                } else prefs.angularUnit
-
                 prefs.copy(
                     activeFirearmId = firearmId,
-                    activeScopeId = nextScopeId,
-                    activeAmmoId = nextAmmoId,
-                    angularUnit = matchedUnit
+                    activeAmmoId = nextAmmoId
                 )
             }
-            showMessage("Active rig: ${targetGun.name}")
+            showMessage("Firearm: ${targetGun.name}")
         }
     }
 
@@ -399,7 +389,7 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // --- Scope / Optic Management (Remembers pairing + auto-matches MOA/MRAD unit) ---
+    // --- Scope / Optic Management (Independent across guns + auto-matches MOA/MRAD unit) ---
 
     fun selectActiveScope(scopeId: String) {
         viewModelScope.launch {
@@ -412,8 +402,7 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
 
                 prefs.copy(
                     activeScopeId = scopeId,
-                    angularUnit = matchedUnit,
-                    firearmScopeMemory = prefs.firearmScopeMemory + (prefs.activeFirearmId to scopeId)
+                    angularUnit = matchedUnit
                 )
             }
             showMessage("Scope: ${scope.name} (${scope.clickUnit.label})")
@@ -434,8 +423,7 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
                     } else prefs.angularUnit
                     prefs.copy(
                         activeScopeId = scope.id,
-                        angularUnit = matchedUnit,
-                        firearmScopeMemory = prefs.firearmScopeMemory + (prefs.activeFirearmId to scope.id)
+                        angularUnit = matchedUnit
                     )
                 }
             }
