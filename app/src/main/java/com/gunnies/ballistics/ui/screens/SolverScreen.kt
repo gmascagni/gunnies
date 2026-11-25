@@ -20,8 +20,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,6 +38,7 @@ import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.EditNote
@@ -93,6 +97,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.gunnies.ballistics.R
 import com.gunnies.ballistics.ble.BleConnectionState
 import com.gunnies.ballistics.data.UnitFormatters
@@ -1674,16 +1680,49 @@ private fun BallisticCalibrationDialog(
         }
     }
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("Ballistic Calibration") },
-        text = {
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .systemBarsPadding()
+                .imePadding()
+                .padding(vertical = 12.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Ballistic Calibration",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     SegmentedButton(
                         selected = stageTab == 0,
@@ -2058,17 +2097,17 @@ private fun BallisticCalibrationDialog(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            SegmentedButton(
                                 selected = !ttAxisIsWind,
                                 onClick = { ttAxisIsWind = false },
-                                label = { Text("Elevation Turret") }
-                            )
-                            FilterChip(
+                                shape = SegmentedButtonDefaults.itemShape(0, 2)
+                            ) { Text("Elevation", maxLines = 1) }
+                            SegmentedButton(
                                 selected = ttAxisIsWind,
                                 onClick = { ttAxisIsWind = true },
-                                label = { Text("Windage Turret") }
-                            )
+                                shape = SegmentedButtonDefaults.itemShape(1, 2)
+                            ) { Text("Windage", maxLines = 1) }
                         }
                         OutlinedTextField(
                             value = ttDistText,
@@ -2160,45 +2199,54 @@ private fun BallisticCalibrationDialog(
                 }
 
                 errorMsg?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    when (stageTab) {
+                        0 -> {
+                            val res = multiPointResult
+                            Button(
+                                enabled = res != null,
+                                onClick = {
+                                    if (res != null) onApplyMultiPoint(res)
+                                    else errorMsg = "Unable to fit MV/BC for these inputs."
+                                }
+                            ) { Text(if (res?.fittedBothMvAndBc == true) "Apply MV & BC" else "Apply Trued MV") }
+                        }
+                        1 -> {
+                            Button(
+                                enabled = computedDsf != null,
+                                onClick = {
+                                    if (computedDsf != null) onApplyTruedDsf(computedDsf)
+                                    else errorMsg = "Unable to solve DSF for these inputs."
+                                }
+                            ) { Text("Apply DSF") }
+                        }
+                        else -> {
+                            val res = ttResult
+                            Button(
+                                enabled = res != null && res.isWithinValidRange,
+                                onClick = {
+                                    if (res != null && res.isWithinValidRange) {
+                                        if (ttAxisIsWind) onApplyScopeSsf(null, res.scaleFactor)
+                                        else onApplyScopeSsf(res.scaleFactor, null)
+                                    }
+                                }
+                            ) { Text("Save Scope SSF") }
+                        }
+                    }
+                }
             }
-        },
-        confirmButton = {
-            when (stageTab) {
-                0 -> {
-                    val res = multiPointResult
-                    Button(
-                        enabled = res != null,
-                        onClick = {
-                            if (res != null) onApplyMultiPoint(res)
-                            else errorMsg = "Unable to fit MV/BC for these inputs."
-                        }
-                    ) { Text(if (res?.fittedBothMvAndBc == true) "Apply MV & BC" else "Apply Trued MV") }
-                }
-                1 -> {
-                    Button(
-                        enabled = computedDsf != null,
-                        onClick = {
-                            if (computedDsf != null) onApplyTruedDsf(computedDsf)
-                            else errorMsg = "Unable to solve DSF for these inputs."
-                        }
-                    ) { Text("Apply DSF") }
-                }
-                else -> {
-                    val res = ttResult
-                    Button(
-                        enabled = res != null && res.isWithinValidRange,
-                        onClick = {
-                            if (res != null && res.isWithinValidRange) {
-                                if (ttAxisIsWind) onApplyScopeSsf(null, res.scaleFactor)
-                                else onApplyScopeSsf(res.scaleFactor, null)
-                            }
-                        }
-                    ) { Text("Save Scope SSF") }
-                }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -2257,22 +2305,55 @@ private fun HitProbabilityDialog(
         }
     }
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.GpsFixed, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
-                Spacer(Modifier.width(8.dp))
-                Text("Hit Probability — ${UnitFormatters.formatDistance(currentSolution.rangeYards, prefs.distanceUnit)}")
-            }
-        },
-        text = {
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .systemBarsPadding()
+                .imePadding()
+                .padding(vertical = 12.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.GpsFixed, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Hit Probability — ${UnitFormatters.formatDistance(currentSolution.rangeYards, prefs.distanceUnit)}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                 // Hero P(Hit) Banner
                 val res = result
                 val hitColor = when {
@@ -2472,10 +2553,17 @@ private fun HitProbabilityDialog(
                         }
                     }
                 }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Button(onClick = onDismiss) { Text("Done") }
+                }
             }
-        },
-        confirmButton = {
-            Button(onClick = onDismiss) { Text("Done") }
         }
-    )
+    }
 }
