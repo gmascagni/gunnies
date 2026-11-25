@@ -9,6 +9,8 @@ import com.bc1800.ballistics.model.FirearmSetup
 import com.bc1800.ballistics.model.ReticleType
 import com.bc1800.ballistics.model.ScopeCategory
 import com.bc1800.ballistics.model.ScopeSetup
+import com.bc1800.ballistics.model.SuppressorCategory
+import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.TwistDirection
 import com.bc1800.ballistics.model.WeaponMode
 
@@ -136,5 +138,33 @@ object BallisticsCatalog {
         AmmoLoad("cat-am-9mm-golddot124p", "Speer Gold Dot 9mm +P — 124gr GDHP", "9mm Luger", AmmoCategory.HANDGUN, DragModel.G1, 0.145, 1220.0, 124.0, 0.355, notes = "Bonded LE duty +P hollow point"),
         AmmoLoad("cat-am-45acp-230fmj", "CCI Blazer Brass .45 ACP — 230gr FMJ", ".45 ACP", AmmoCategory.HANDGUN, DragModel.G1, 0.195, 830.0, 230.0, 0.451, notes = "Classic subsonic 230gr hardball"),
         AmmoLoad("cat-am-10mm-180jhp", "Sig Sauer Elite 10mm — 180gr V-Crown", "10mm Auto", AmmoCategory.HANDGUN, DragModel.G1, 0.165, 1250.0, 180.0, 0.400, notes = "Full-power woods defense 10mm")
+    )
+
+    val suppressors: List<SuppressorSetup> = listOf(
+        // Rimfire (.22)
+        SuppressorSetup("cat-supp-gemtech-gm22", "Gemtech GM-22", "Gemtech", SuppressorCategory.RIMFIRE, ".22 LR", "1/2x28 Direct Thread", 5.0, 2.5, 1.0, notes = "G-Core 7075 aluminum monocore • Ultra-light 2.5 oz"),
+        SuppressorSetup("cat-supp-deadair-mask", "Dead Air Mask HD", "Dead Air", SuppressorCategory.RIMFIRE, ".22 LR / 5.7x28", "1/2x28 Direct Thread", 5.1, 6.6, 1.07, notes = "Titanium tube & stainless baffles • Zero first-round pop"),
+        SuppressorSetup("cat-supp-sico-sparrow", "SilencerCo Sparrow 22", "SilencerCo", SuppressorCategory.RIMFIRE, ".22 LR / .17 HMR", "1/2x28 Direct Thread", 5.08, 6.5, 1.06, notes = "Multi-part clam-shell monocore for easy cleaning"),
+        SuppressorSetup("cat-supp-sico-switchback", "SilencerCo Switchback 22", "SilencerCo", SuppressorCategory.RIMFIRE, ".22 LR / 5.7x28", "1/2x28 Direct Thread", 5.75, 6.5, 1.07, notes = "Modular 4-configuration rimfire suppressor"),
+        SuppressorSetup("cat-supp-rugged-oculus", "Rugged Oculus 22", "Rugged", SuppressorCategory.RIMFIRE, ".22 LR / .22 WMR", "1/2x28 Direct Thread", 5.25, 6.9, 1.06, notes = "17-4 stainless modular belt-fed rated rimfire can"),
+        SuppressorSetup("cat-supp-q-elcamino", "Q El Camino", "Q", SuppressorCategory.RIMFIRE, ".22 LR / .17 HMR", "1/2x28 Direct Thread", 5.95, 4.3, 1.0, notes = "Titanium tube + stainless baffles • 4.3 oz"),
+        SuppressorSetup("cat-supp-tbac-22td", "Thunder Beast 22 Take Down", "TBAC", SuppressorCategory.RIMFIRE, ".22 LR / .22 WMR", "1/2x28 Direct Thread", 5.6, 5.9, 1.0, notes = "Precision bolt-action rimfire repeatable POI"),
+
+        // Rifle
+        SuppressorSetup("cat-supp-sf-rc2", "SureFire SOCOM556-RC2", "SureFire", SuppressorCategory.RIFLE, "5.56x45mm NATO", "SureFire Fast-Attach QD", 6.4, 17.0, 1.5, notes = "Duty-grade 5.56 QD suppressor • Minimal repeatable POI shift"),
+        SuppressorSetup("cat-supp-ocl-polonium", "Otter Creek Labs Polonium", "Otter Creek Labs", SuppressorCategory.RIFLE, "5.56 / 6mm", "1.375x24 HUB / 1/2x28", 5.8, 13.5, 1.625, notes = "High-suppression 17-4 PH stainless 5.56/6mm can"),
+        SuppressorSetup("cat-supp-ocl-polonium-k", "Otter Creek Labs Polonium-K", "Otter Creek Labs", SuppressorCategory.RIFLE, "5.56 / 6mm", "1.375x24 HUB / 1/2x28", 4.8, 11.5, 1.625, notes = "Compact K-length low-backpressure 5.56/6mm suppressor"),
+        SuppressorSetup("cat-supp-da-sandman-s", "Dead Air Sandman-S", "Dead Air", SuppressorCategory.RIFLE, ".308 / 6.5 CM / 5.56", "KeyMo QD", 6.8, 17.7, 1.5, notes = "Full-auto rated Stellite baffle .30 cal QD"),
+        SuppressorSetup("cat-supp-da-nomad30", "Dead Air Nomad-30", "Dead Air", SuppressorCategory.RIFLE, ".300 WM / .308 / 6.5 CM", "1.375x24 HUB", 6.5, 14.0, 1.735, notes = "Tubeless 17-4 stainless hunting & precision .30 cal"),
+        SuppressorSetup("cat-supp-sico-omega300", "SilencerCo Omega 300", "SilencerCo", SuppressorCategory.RIFLE, ".300 WM / .308 / 5.56", "ASR QD / HUB", 7.08, 14.8, 1.56, notes = "Classic precision .30 cal w/ Anchor Brake"),
+        SuppressorSetup("cat-supp-hux-flow556k", "HUXWRX FLOW 556k", "HUXWRX", SuppressorCategory.RIFLE, "5.56x45mm NATO", "HX-QD LH", 5.5, 11.8, 1.6, notes = "3D-printed Flow-Through low-blowback AR-15 suppressor"),
+
+        // Pistol / Subgun
+        SuppressorSetup("cat-supp-rugged-obsidian9", "Rugged Obsidian 9", "Rugged", SuppressorCategory.PISTOL, "9mm / .300 BLK Sub", "Nielsen Piston / 1/2x28", 7.8, 12.7, 1.37, notes = "Modular 7.8\" / 4.85\" handgun & PCC 9mm suppressor"),
+        SuppressorSetup("cat-supp-sico-omega9k", "SilencerCo Omega 9K", "SilencerCo", SuppressorCategory.PISTOL, "9mm / .300 BLK", "Alpha Piston / 3-Lug", 4.7, 7.2, 1.48, notes = "Compact welded subgun & pistol 9mm can"),
+        SuppressorSetup("cat-supp-da-wolfman", "Dead Air Wolfman", "Dead Air", SuppressorCategory.PISTOL, "9mm / .300 BLK / 5.56", "KeyMicro / 1/2x28", 7.5, 14.4, 1.618, notes = "Modular PCC / handgun / subsonic rifle suppressor"),
+
+        // Multi-Caliber
+        SuppressorSetup("cat-supp-sico-hybrid46m", "SilencerCo Hybrid 46M", "SilencerCo", SuppressorCategory.MULTI_CAL, "9mm–.45-70 / .338 LM", "Charlie ASR / Piston", 7.72, 14.9, 1.57, notes = "Modular universal multi-caliber rifle & pistol can")
     )
 }

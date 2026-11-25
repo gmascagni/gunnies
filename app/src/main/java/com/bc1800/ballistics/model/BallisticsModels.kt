@@ -53,6 +53,14 @@ enum class AmmoCategory(val label: String) {
 }
 
 @Serializable
+enum class SuppressorCategory(val label: String) {
+    RIMFIRE("Rimfire (.22)"),
+    RIFLE("Rifle"),
+    PISTOL("Pistol / Subgun"),
+    MULTI_CAL("Multi-Caliber")
+}
+
+@Serializable
 enum class TwistDirection(val label: String) {
     RIGHT("Right"),
     LEFT("Left"),
@@ -143,8 +151,33 @@ data class AmmoLoad(
 )
 
 /**
+ * Independent Suppressor setup (sound moderator: caliber rating, mount, physical specs,
+ * velocity shift, and zero POI shift).
+ */
+@Serializable
+data class SuppressorSetup(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val manufacturer: String = "",
+    val category: SuppressorCategory = SuppressorCategory.RIMFIRE,
+    val caliberRating: String = ".22 LR",
+    val mountType: String = "1/2x28 Direct Thread",
+    val lengthInches: Double = 5.0,
+    val weightOz: Double = 2.5,
+    val diameterInches: Double = 1.0,
+    /** Positive = velocity boost (fps) with suppressor attached. */
+    val mvShiftFps: Double = 0.0,
+    /** Positive = impacts high at zero range (inches). */
+    val poiShiftVerticalInches: Double = 0.0,
+    /** Positive = impacts right at zero range (inches). */
+    val poiShiftHorizontalInches: Double = 0.0,
+    val isFavorite: Boolean = false,
+    val notes: String = ""
+)
+
+/**
  * Combined active ballistic setup fed into BallisticEngine & Lbc1800Protocol,
- * assembled dynamically from active Firearm + active Scope + active Ammo.
+ * assembled dynamically from active Firearm + active Scope + active Ammo + optional Suppressor.
  */
 @Serializable
 data class RifleProfile(
@@ -153,6 +186,7 @@ data class RifleProfile(
     val caliber: String,
     val firearmName: String = "",
     val scopeName: String = "",
+    val suppressorName: String = "",
     val weaponMode: WeaponMode = WeaponMode.RIFLE,
     val dragModel: DragModel = DragModel.G1,
     val ballisticCoefficient: Double = 0.462,
@@ -177,16 +211,22 @@ data class RifleProfile(
     val notes: String = ""
 ) {
     companion object {
-        fun combine(firearm: FirearmSetup, scope: ScopeSetup, ammo: AmmoLoad): RifleProfile = RifleProfile(
-            id = "${firearm.id}__${scope.id}__${ammo.id}",
+        fun combine(
+            firearm: FirearmSetup,
+            scope: ScopeSetup,
+            ammo: AmmoLoad,
+            suppressor: SuppressorSetup? = null
+        ): RifleProfile = RifleProfile(
+            id = "${firearm.id}__${scope.id}__${ammo.id}__${suppressor?.id ?: "none"}",
             name = ammo.name,
             caliber = ammo.caliber,
             firearmName = firearm.name,
             scopeName = scope.name,
+            suppressorName = suppressor?.name ?: "",
             weaponMode = if (firearm.category == FirearmCategory.BOW_OTHER) WeaponMode.BOW else scope.weaponMode,
             dragModel = ammo.dragModel,
             ballisticCoefficient = ammo.ballisticCoefficient,
-            muzzleVelocityFps = ammo.muzzleVelocityFps,
+            muzzleVelocityFps = (ammo.muzzleVelocityFps + (suppressor?.mvShiftFps ?: 0.0)).coerceAtLeast(100.0),
             bulletWeightGrains = ammo.bulletWeightGrains,
             bulletDiameterInches = ammo.bulletDiameterInches,
             bulletLengthInches = ammo.bulletLengthInches,
@@ -194,8 +234,8 @@ data class RifleProfile(
             chronoTempF = ammo.chronoTempF,
             sightHeightInches = scope.sightHeightInches,
             zeroRangeYards = scope.zeroRangeYards,
-            zeroOffsetVerticalInches = scope.zeroOffsetVerticalInches,
-            zeroOffsetHorizontalInches = scope.zeroOffsetHorizontalInches,
+            zeroOffsetVerticalInches = scope.zeroOffsetVerticalInches + (suppressor?.poiShiftVerticalInches ?: 0.0),
+            zeroOffsetHorizontalInches = scope.zeroOffsetHorizontalInches + (suppressor?.poiShiftHorizontalInches ?: 0.0),
             elevationSsf = scope.elevationSsf,
             windageSsf = scope.windageSsf,
             clickUnit = scope.clickUnit,
@@ -204,7 +244,9 @@ data class RifleProfile(
             zeroTempF = scope.zeroTempF,
             zeroPressureInHg = scope.zeroPressureInHg,
             zeroHumidityPercent = scope.zeroHumidityPercent,
-            notes = listOf(firearm.name, scope.name, ammo.notes).filter { it.isNotBlank() }.joinToString(" • ")
+            notes = listOf(firearm.name, scope.name, suppressor?.name ?: "", ammo.notes)
+                .filter { it.isNotBlank() }
+                .joinToString(" • ")
         )
     }
 }
@@ -303,6 +345,7 @@ data class UserPreferences(
     val activeFirearmId: String = "gun-cz-457",
     val activeScopeId: String = "scope-arken-sh4-gen2",
     val activeAmmoId: String = "ammo-cci-quiet22-40",
+    val activeSuppressorId: String? = "supp-gemtech-gm22",
     /** Scopes stay completely independent across firearms; ammo can still be remembered per firearm. */
     val firearmAmmoMemory: Map<String, String> = mapOf(
         "gun-cz-457" to "ammo-cci-quiet22-40",
@@ -493,12 +536,32 @@ object DefaultProfiles {
         AmmoLoad("ammo-blazer-alum-9mm-115", "CCI Blazer Aluminum 9mm — 115gr FMJ", "9mm Luger", AmmoCategory.HANDGUN, DragModel.G1, 0.125, 1145.0, 115.0, 0.355, bulletLengthInches = 0.560, isFavorite = true, notes = "Blazer Aluminum Case 115gr FMJ")
     )
 
+    val starterSuppressors: List<SuppressorSetup> = listOf(
+        SuppressorSetup(
+            id = "supp-gemtech-gm22",
+            name = "Gemtech GM-22",
+            manufacturer = "Gemtech",
+            category = SuppressorCategory.RIMFIRE,
+            caliberRating = ".22 LR",
+            mountType = "1/2x28 Direct Thread",
+            lengthInches = 5.0,
+            weightOz = 2.5,
+            diameterInches = 1.0,
+            mvShiftFps = 0.0,
+            poiShiftVerticalInches = 0.0,
+            poiShiftHorizontalInches = 0.0,
+            isFavorite = true,
+            notes = "G-Core 7075 aluminum monocore • 5.0\" • 2.5 oz • 1/2x28"
+        )
+    )
+
     val starterProfiles: List<RifleProfile>
         get() = listOf(
             RifleProfile.combine(
                 starterFirearms.first(),
                 starterScopes.first(),
-                starterAmmo.first()
+                starterAmmo.first(),
+                starterSuppressors.firstOrNull()
             )
         )
 }

@@ -82,6 +82,8 @@ import com.bc1800.ballistics.model.FirearmSetup
 import com.bc1800.ballistics.model.ReticleType
 import com.bc1800.ballistics.model.ScopeCategory
 import com.bc1800.ballistics.model.ScopeSetup
+import com.bc1800.ballistics.model.SuppressorCategory
+import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.TwistDirection
 import com.bc1800.ballistics.ui.AppUiState
 import com.bc1800.ballistics.ui.BallisticsViewModel
@@ -112,6 +114,11 @@ fun ProfilesScreen(
     var pendingDeleteAmmo by remember { mutableStateOf<AmmoLoad?>(null) }
     var ammoFilter by remember { mutableStateOf("All") }
 
+    var editingSuppressor by remember { mutableStateOf<SuppressorSetup?>(null) }
+    var isCreatingSuppressor by remember { mutableStateOf(false) }
+    var pendingDeleteSuppressor by remember { mutableStateOf<SuppressorSetup?>(null) }
+    var suppressorFilter by remember { mutableStateOf("All") }
+
     val filteredGuns = remember(uiState.firearms, gunFilter) {
         when (gunFilter) {
             "★ Favorites" -> uiState.firearms.filter { it.isFavorite }.ifEmpty { uiState.firearms }
@@ -141,12 +148,23 @@ fun ProfilesScreen(
         }
     }
 
+    val filteredSuppressors = remember(uiState.suppressors, suppressorFilter) {
+        when (suppressorFilter) {
+            "★ Favorites" -> uiState.suppressors.filter { it.isFavorite }.ifEmpty { uiState.suppressors }
+            "Rimfire (.22)" -> uiState.suppressors.filter { it.category == SuppressorCategory.RIMFIRE }
+            "Rifle" -> uiState.suppressors.filter { it.category == SuppressorCategory.RIFLE }
+            "Pistol / Subgun" -> uiState.suppressors.filter { it.category == SuppressorCategory.PISTOL }
+            "Multi-Caliber" -> uiState.suppressors.filter { it.category == SuppressorCategory.MULTI_CAL }
+            else -> uiState.suppressors
+        }
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWide = maxWidth >= 600.dp
         val columns = if (isWide) 2 else 1
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // Active 3-Way Rig Strip
+            // Active Rig Strip
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
@@ -168,8 +186,9 @@ fun ProfilesScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    val suppLabel = uiState.activeSuppressor?.name ?: "Unsuppressed"
                     Text(
-                        text = uiState.activeAmmo.name,
+                        text = "${uiState.activeAmmo.name}  •  Can: $suppLabel",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.secondary,
                         maxLines = 1,
@@ -187,22 +206,27 @@ fun ProfilesScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1.2f)) {
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1.3f)) {
                         SegmentedButton(
                             selected = selectedSubTab == 0,
                             onClick = { selectedSubTab = 0 },
-                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3)
-                        ) { Text("Guns (${uiState.firearms.size})") }
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 4)
+                        ) { Text("Guns (${uiState.firearms.size})", maxLines = 1) }
                         SegmentedButton(
                             selected = selectedSubTab == 1,
                             onClick = { selectedSubTab = 1 },
-                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3)
-                        ) { Text("Scopes (${uiState.scopes.size})") }
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 4)
+                        ) { Text("Scopes (${uiState.scopes.size})", maxLines = 1) }
                         SegmentedButton(
                             selected = selectedSubTab == 2,
                             onClick = { selectedSubTab = 2 },
-                            shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3)
-                        ) { Text("Ammo (${uiState.ammoLoads.size})") }
+                            shape = SegmentedButtonDefaults.itemShape(index = 2, count = 4)
+                        ) { Text("Ammo (${uiState.ammoLoads.size})", maxLines = 1) }
+                        SegmentedButton(
+                            selected = selectedSubTab == 3,
+                            onClick = { selectedSubTab = 3 },
+                            shape = SegmentedButtonDefaults.itemShape(index = 3, count = 4)
+                        ) { Text("Cans (${uiState.suppressors.size})", maxLines = 1) }
                     }
 
                     OutlinedButton(
@@ -215,7 +239,8 @@ fun ProfilesScreen(
                             when (selectedSubTab) {
                                 0 -> "Catalog (${BallisticsCatalog.firearms.size})"
                                 1 -> "Catalog (${BallisticsCatalog.scopes.size})"
-                                else -> "Catalog (${BallisticsCatalog.ammo.size})"
+                                2 -> "Catalog (${BallisticsCatalog.ammo.size})"
+                                else -> "Catalog (${BallisticsCatalog.suppressors.size})"
                             }
                         )
                     }
@@ -229,18 +254,23 @@ fun ProfilesScreen(
                     SegmentedButton(
                         selected = selectedSubTab == 0,
                         onClick = { selectedSubTab = 0 },
-                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3)
-                    ) { Text("Guns (${uiState.firearms.size})") }
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 4)
+                    ) { Text("Guns", maxLines = 1) }
                     SegmentedButton(
                         selected = selectedSubTab == 1,
                         onClick = { selectedSubTab = 1 },
-                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3)
-                    ) { Text("Scopes (${uiState.scopes.size})") }
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 4)
+                    ) { Text("Scopes", maxLines = 1) }
                     SegmentedButton(
                         selected = selectedSubTab == 2,
                         onClick = { selectedSubTab = 2 },
-                        shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3)
-                    ) { Text("Ammo (${uiState.ammoLoads.size})") }
+                        shape = SegmentedButtonDefaults.itemShape(index = 2, count = 4)
+                    ) { Text("Ammo", maxLines = 1) }
+                    SegmentedButton(
+                        selected = selectedSubTab == 3,
+                        onClick = { selectedSubTab = 3 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 3, count = 4)
+                    ) { Text("Cans", maxLines = 1) }
                 }
 
                 OutlinedButton(
@@ -256,7 +286,8 @@ fun ProfilesScreen(
                         text = when (selectedSubTab) {
                             0 -> "Browse Firearms Catalog (${BallisticsCatalog.firearms.size})"
                             1 -> "Browse Optics Catalog (${BallisticsCatalog.scopes.size})"
-                            else -> "Browse Ammo Catalog (${BallisticsCatalog.ammo.size})"
+                            2 -> "Browse Ammo Catalog (${BallisticsCatalog.ammo.size})"
+                            else -> "Browse Suppressors Catalog (${BallisticsCatalog.suppressors.size})"
                         },
                         style = MaterialTheme.typography.labelLarge
                     )
@@ -366,7 +397,7 @@ fun ProfilesScreen(
                     }
                 }
 
-                else -> {
+                2 -> {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columns),
                         modifier = Modifier.weight(1f),
@@ -416,6 +447,113 @@ fun ProfilesScreen(
                         }
                     }
                 }
+
+                else -> {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(columns),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 88.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                listOf("All", "★ Favorites", "Rimfire (.22)", "Rifle", "Pistol / Subgun", "Multi-Caliber").forEach { tag ->
+                                    FilterChip(
+                                        selected = suppressorFilter == tag,
+                                        onClick = { suppressorFilter = tag },
+                                        label = { Text(tag) }
+                                    )
+                                }
+                            }
+                        }
+
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            val isBare = uiState.activeSuppressor == null
+                            Surface(
+                                onClick = { viewModel.selectActiveSuppressor(null) },
+                                color = if (isBare) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+                                border = if (isBare) {
+                                    BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                } else {
+                                    BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                },
+                                shape = MaterialTheme.shapes.large,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Unsuppressed (Bare Muzzle)",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "No suppressor attached — 0 MV shift, 0 POI shift",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (isBare) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = "Active",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        items(filteredSuppressors, key = { it.id }) { supp ->
+                            val isActive = supp.id == uiState.activeSuppressor?.id
+                            val shiftParts = buildList {
+                                if (kotlin.math.abs(supp.mvShiftFps) > 0.1) {
+                                    add(String.format(Locale.US, "%+.0f fps", supp.mvShiftFps))
+                                }
+                                if (kotlin.math.abs(supp.poiShiftVerticalInches) > 0.02 ||
+                                    kotlin.math.abs(supp.poiShiftHorizontalInches) > 0.02
+                                ) {
+                                    add(
+                                        String.format(
+                                            Locale.US,
+                                            "POI %+.1f\"V/%+.1f\"H",
+                                            supp.poiShiftVerticalInches,
+                                            supp.poiShiftHorizontalInches
+                                        )
+                                    )
+                                }
+                            }.joinToString(" • ")
+                            val shiftSuffix = if (shiftParts.isNotEmpty()) " • $shiftParts" else ""
+
+                            ArsenalItemCard(
+                                title = supp.name,
+                                subtitle = "${supp.category.label} • ${supp.caliberRating} • ${supp.lengthInches}\" / ${supp.weightOz} oz • ${supp.mountType}$shiftSuffix",
+                                notes = supp.notes,
+                                isActive = isActive,
+                                isFavorite = supp.isFavorite,
+                                accentColor = MaterialTheme.colorScheme.tertiary,
+                                canDelete = true,
+                                onSelect = { viewModel.selectActiveSuppressor(supp.id) },
+                                onToggleFavorite = { viewModel.toggleSuppressorFavorite(supp) },
+                                onEdit = {
+                                    isCreatingSuppressor = false
+                                    editingSuppressor = supp
+                                },
+                                onDuplicate = { viewModel.duplicateSuppressor(supp) },
+                                onDelete = { pendingDeleteSuppressor = supp }
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -448,7 +586,7 @@ fun ProfilesScreen(
                             isFavorite = true
                         )
                     }
-                    else -> {
+                    2 -> {
                         isCreatingAmmo = true
                         editingAmmo = AmmoLoad(
                             id = UUID.randomUUID().toString(),
@@ -460,6 +598,21 @@ fun ProfilesScreen(
                             muzzleVelocityFps = 3100.0,
                             bulletWeightGrains = 55.0,
                             bulletDiameterInches = 0.224,
+                            isFavorite = true
+                        )
+                    }
+                    else -> {
+                        isCreatingSuppressor = true
+                        editingSuppressor = SuppressorSetup(
+                            id = UUID.randomUUID().toString(),
+                            name = "",
+                            manufacturer = "",
+                            category = SuppressorCategory.RIMFIRE,
+                            caliberRating = ".22 LR",
+                            mountType = "1/2x28 Direct Thread",
+                            lengthInches = 5.0,
+                            weightOz = 5.0,
+                            diameterInches = 1.0,
                             isFavorite = true
                         )
                     }
@@ -477,11 +630,12 @@ fun ProfilesScreen(
 
     // --- Built-in Catalog Browser Dialog ---
     if (showCatalogDialog) {
-        val existingNames = remember(selectedSubTab, uiState.firearms, uiState.scopes, uiState.ammoLoads) {
+        val existingNames = remember(selectedSubTab, uiState.firearms, uiState.scopes, uiState.ammoLoads, uiState.suppressors) {
             when (selectedSubTab) {
                 0 -> uiState.firearms.map { it.name.trim().lowercase(Locale.US) }.toSet()
                 1 -> uiState.scopes.map { it.name.trim().lowercase(Locale.US) }.toSet()
-                else -> uiState.ammoLoads.map { it.name.trim().lowercase(Locale.US) }.toSet()
+                2 -> uiState.ammoLoads.map { it.name.trim().lowercase(Locale.US) }.toSet()
+                else -> uiState.suppressors.map { it.name.trim().lowercase(Locale.US) }.toSet()
             }
         }
         CatalogBrowserDialog(
@@ -498,6 +652,10 @@ fun ProfilesScreen(
             },
             onAddAmmo = { ammo ->
                 viewModel.saveAmmo(ammo.copy(id = UUID.randomUUID().toString(), isFavorite = true), makeActive = true)
+                showCatalogDialog = false
+            },
+            onAddSuppressor = { supp ->
+                viewModel.saveSuppressor(supp.copy(id = UUID.randomUUID().toString(), isFavorite = true), makeActive = true)
                 showCatalogDialog = false
             }
         )
@@ -540,6 +698,18 @@ fun ProfilesScreen(
         )
     }
 
+    editingSuppressor?.let { supp ->
+        SuppressorEditorDialog(
+            initial = supp,
+            isNew = isCreatingSuppressor,
+            onDismiss = { editingSuppressor = null },
+            onSave = { updated ->
+                viewModel.saveSuppressor(updated, makeActive = isCreatingSuppressor)
+                editingSuppressor = null
+            }
+        )
+    }
+
     pendingDeleteGun?.let { target ->
         ConfirmDeleteDialog(
             title = "Delete Firearm?",
@@ -573,6 +743,18 @@ fun ProfilesScreen(
                 pendingDeleteAmmo = null
             },
             onDismiss = { pendingDeleteAmmo = null }
+        )
+    }
+
+    pendingDeleteSuppressor?.let { target ->
+        ConfirmDeleteDialog(
+            title = "Delete Suppressor?",
+            itemName = target.name,
+            onConfirm = {
+                viewModel.deleteSuppressor(target.id)
+                pendingDeleteSuppressor = null
+            },
+            onDismiss = { pendingDeleteSuppressor = null }
         )
     }
 }
@@ -1203,6 +1385,181 @@ private fun AmmoEditorDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SuppressorEditorDialog(
+    initial: SuppressorSetup,
+    isNew: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (SuppressorSetup) -> Unit
+) {
+    var name by remember { mutableStateOf(initial.name) }
+    var manufacturer by remember { mutableStateOf(initial.manufacturer) }
+    var category by remember { mutableStateOf(initial.category) }
+    var caliberRating by remember { mutableStateOf(initial.caliberRating) }
+    var mountType by remember { mutableStateOf(initial.mountType) }
+    var lengthIn by remember { mutableStateOf(initial.lengthInches.toString()) }
+    var weightOz by remember { mutableStateOf(initial.weightOz.toString()) }
+    var diameterIn by remember { mutableStateOf(initial.diameterInches.toString()) }
+    var mvShift by remember { mutableStateOf(String.format(Locale.US, "%.0f", initial.mvShiftFps)) }
+    var poiVert by remember { mutableStateOf(String.format(Locale.US, "%.2f", initial.poiShiftVerticalInches)) }
+    var poiHoriz by remember { mutableStateOf(String.format(Locale.US, "%.2f", initial.poiShiftHorizontalInches)) }
+    var isFavorite by remember { mutableStateOf(initial.isFavorite) }
+    var notes by remember { mutableStateOf(initial.notes) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isNew) "New Suppressor" else "Edit Suppressor") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Suppressor Model *") },
+                    placeholder = { Text("e.g., Gemtech GM-22") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = manufacturer,
+                    onValueChange = { manufacturer = it },
+                    label = { Text("Manufacturer") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("Category", style = MaterialTheme.typography.labelMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SuppressorCategory.entries.forEach { cat ->
+                        FilterChip(
+                            selected = category == cat,
+                            onClick = { category = cat },
+                            label = { Text(cat.label) }
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = caliberRating,
+                        onValueChange = { caliberRating = it },
+                        label = { Text("Caliber Rating") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = mountType,
+                        onValueChange = { mountType = it },
+                        label = { Text("Mount / Thread") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = lengthIn,
+                        onValueChange = { lengthIn = it },
+                        label = { Text("Len (in)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = weightOz,
+                        onValueChange = { weightOz = it },
+                        label = { Text("Wt (oz)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = diameterIn,
+                        onValueChange = { diameterIn = it },
+                        label = { Text("Dia (in)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = mvShift,
+                        onValueChange = { mvShift = it },
+                        label = { Text("MV Shift (fps)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = poiVert,
+                        onValueChange = { poiVert = it },
+                        label = { Text("POI Vert (in)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = poiHoriz,
+                        onValueChange = { poiHoriz = it },
+                        label = { Text("POI Horiz (in)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Favorite Suppressor (★)", modifier = Modifier.weight(1f))
+                    Switch(checked = isFavorite, onCheckedChange = { isFavorite = it })
+                }
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("Notes") },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3
+                )
+                errorText?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val parsedLen = lengthIn.toDoubleOrNull() ?: 5.0
+                val parsedWt = weightOz.toDoubleOrNull() ?: 5.0
+                val parsedDia = diameterIn.toDoubleOrNull() ?: 1.0
+                val parsedMvShift = mvShift.toDoubleOrNull() ?: 0.0
+                val parsedPoiV = poiVert.toDoubleOrNull() ?: 0.0
+                val parsedPoiH = poiHoriz.toDoubleOrNull() ?: 0.0
+                if (name.isBlank()) {
+                    errorText = "Please enter a suppressor name."
+                } else {
+                    onSave(
+                        initial.copy(
+                            name = name.trim(),
+                            manufacturer = manufacturer.trim(),
+                            category = category,
+                            caliberRating = caliberRating.trim().ifBlank { "Multi" },
+                            mountType = mountType.trim().ifBlank { "Direct Thread" },
+                            lengthInches = parsedLen.coerceIn(1.0, 24.0),
+                            weightOz = parsedWt.coerceIn(0.5, 64.0),
+                            diameterInches = parsedDia.coerceIn(0.5, 4.0),
+                            mvShiftFps = parsedMvShift.coerceIn(-250.0, 250.0),
+                            poiShiftVerticalInches = parsedPoiV.coerceIn(-12.0, 12.0),
+                            poiShiftHorizontalInches = parsedPoiH.coerceIn(-12.0, 12.0),
+                            isFavorite = isFavorite,
+                            notes = notes.trim()
+                        )
+                    )
+                }
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
 @Composable
 private fun CatalogBrowserDialog(
     tabIndex: Int,
@@ -1210,7 +1567,8 @@ private fun CatalogBrowserDialog(
     onDismiss: () -> Unit,
     onAddGun: (FirearmSetup) -> Unit,
     onAddScope: (ScopeSetup) -> Unit,
-    onAddAmmo: (AmmoLoad) -> Unit
+    onAddAmmo: (AmmoLoad) -> Unit,
+    onAddSuppressor: (SuppressorSetup) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     val q = query.trim().lowercase(Locale.US)
@@ -1242,6 +1600,17 @@ private fun CatalogBrowserDialog(
         }
     }
 
+    val suppressorMatches = remember(tabIndex, q) {
+        if (tabIndex != 3) emptyList()
+        else BallisticsCatalog.suppressors.filter {
+            q.isEmpty() || it.name.lowercase(Locale.US).contains(q) ||
+                it.manufacturer.lowercase(Locale.US).contains(q) ||
+                it.caliberRating.lowercase(Locale.US).contains(q) ||
+                it.mountType.lowercase(Locale.US).contains(q) ||
+                it.category.label.lowercase(Locale.US).contains(q)
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -1249,7 +1618,8 @@ private fun CatalogBrowserDialog(
                 when (tabIndex) {
                     0 -> "Firearms Catalog"
                     1 -> "Scopes & Optics Catalog"
-                    else -> "Factory Ammo Catalog"
+                    2 -> "Factory Ammo Catalog"
+                    else -> "Suppressors Catalog"
                 }
             )
         },
@@ -1298,7 +1668,7 @@ private fun CatalogBrowserDialog(
                                 )
                             }
                         }
-                        else -> {
+                        2 -> {
                             items(ammoMatches, key = { it.id }) { ammo ->
                                 val alreadyAdded = ammo.name.trim().lowercase(Locale.US) in existingNames
                                 CatalogEntryRow(
@@ -1307,6 +1677,18 @@ private fun CatalogBrowserDialog(
                                     accentColor = MaterialTheme.colorScheme.secondary,
                                     alreadyAdded = alreadyAdded,
                                     onClick = { onAddAmmo(ammo) }
+                                )
+                            }
+                        }
+                        else -> {
+                            items(suppressorMatches, key = { it.id }) { supp ->
+                                val alreadyAdded = supp.name.trim().lowercase(Locale.US) in existingNames
+                                CatalogEntryRow(
+                                    title = supp.name,
+                                    subtitle = "${supp.category.label} • ${supp.caliberRating} • ${supp.lengthInches}\" / ${supp.weightOz} oz • ${supp.mountType}",
+                                    accentColor = MaterialTheme.colorScheme.tertiary,
+                                    alreadyAdded = alreadyAdded,
+                                    onClick = { onAddSuppressor(supp) }
                                 )
                             }
                         }

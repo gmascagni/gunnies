@@ -285,6 +285,7 @@ fun SolverScreen(
                 onSelectGun = { viewModel.selectActiveFirearm(it) },
                 onSelectScope = { viewModel.selectActiveScope(it) },
                 onSelectAmmo = { viewModel.selectActiveAmmo(it) },
+                onSelectSuppressor = { viewModel.selectActiveSuppressor(it) },
                 onDone = { showRigPickerSheet = false }
             )
         }
@@ -357,8 +358,9 @@ private fun CompactRigStrip(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                val suppSuffix = uiState.activeSuppressor?.let { "  •  ${it.name}" } ?: ""
                 Text(
-                    text = "${ammo.name}  •  ${UnitFormatters.formatVelocity(ammo.muzzleVelocityFps, prefs.velocityUnit)}  •  Zero ${
+                    text = "${ammo.name}$suppSuffix  •  ${UnitFormatters.formatVelocity(uiState.activeProfile.muzzleVelocityFps, prefs.velocityUnit)}  •  Zero ${
                         UnitFormatters.formatDistance(scope.zeroRangeYards, prefs.distanceUnit)
                     }",
                     style = MaterialTheme.typography.bodySmall,
@@ -1122,6 +1124,7 @@ private fun RigPickerSheetContent(
     onSelectGun: (String) -> Unit,
     onSelectScope: (String) -> Unit,
     onSelectAmmo: (String) -> Unit,
+    onSelectSuppressor: (String?) -> Unit,
     onDone: () -> Unit
 ) {
     var tab by remember { mutableIntStateOf(0) }
@@ -1158,18 +1161,23 @@ private fun RigPickerSheetContent(
             SegmentedButton(
                 selected = tab == 0,
                 onClick = { tab = 0 },
-                shape = SegmentedButtonDefaults.itemShape(0, 3)
-            ) { Text("Firearm") }
+                shape = SegmentedButtonDefaults.itemShape(0, 4)
+            ) { Text("Gun", maxLines = 1) }
             SegmentedButton(
                 selected = tab == 1,
                 onClick = { tab = 1 },
-                shape = SegmentedButtonDefaults.itemShape(1, 3)
-            ) { Text("Scope") }
+                shape = SegmentedButtonDefaults.itemShape(1, 4)
+            ) { Text("Scope", maxLines = 1) }
             SegmentedButton(
                 selected = tab == 2,
                 onClick = { tab = 2 },
-                shape = SegmentedButtonDefaults.itemShape(2, 3)
-            ) { Text("Ammo") }
+                shape = SegmentedButtonDefaults.itemShape(2, 4)
+            ) { Text("Ammo", maxLines = 1) }
+            SegmentedButton(
+                selected = tab == 3,
+                onClick = { tab = 3 },
+                shape = SegmentedButtonDefaults.itemShape(3, 4)
+            ) { Text("Can", maxLines = 1) }
         }
 
         LazyColumn(
@@ -1199,7 +1207,7 @@ private fun RigPickerSheetContent(
                     )
                 }
 
-                else -> items(sortedAmmo, key = { it.id }) { ammo ->
+                2 -> items(sortedAmmo, key = { it.id }) { ammo ->
                     val selected = ammo.id == uiState.activeAmmo.id
                     RigSheetRow(
                         title = (if (ammo.isFavorite) "★ " else "") + ammo.name,
@@ -1207,6 +1215,34 @@ private fun RigPickerSheetContent(
                         selected = selected,
                         onClick = { onSelectAmmo(ammo.id) }
                     )
+                }
+
+                else -> {
+                    item(key = "unsuppressed") {
+                        RigSheetRow(
+                            title = "Unsuppressed (Bare Muzzle)",
+                            subtitle = "0 fps MV shift • 0\" POI shift",
+                            selected = uiState.activeSuppressor == null,
+                            onClick = { onSelectSuppressor(null) }
+                        )
+                    }
+                    items(uiState.suppressors, key = { it.id }) { supp ->
+                        val selected = supp.id == uiState.activeSuppressor?.id
+                        val shiftText = buildList {
+                            if (abs(supp.mvShiftFps) > 0.1) add(String.format(Locale.US, "%+.0f fps", supp.mvShiftFps))
+                            if (abs(supp.poiShiftVerticalInches) > 0.02 || abs(supp.poiShiftHorizontalInches) > 0.02) {
+                                add(String.format(Locale.US, "POI %+.1f\"V/%+.1f\"H", supp.poiShiftVerticalInches, supp.poiShiftHorizontalInches))
+                            }
+                        }.joinToString(" • ")
+                        RigSheetRow(
+                            title = (if (supp.isFavorite) "★ " else "") + supp.name,
+                            subtitle = listOf("${supp.category.label} • ${supp.caliberRating}", shiftText)
+                                .filter { it.isNotEmpty() }
+                                .joinToString(" • "),
+                            selected = selected,
+                            onClick = { onSelectSuppressor(supp.id) }
+                        )
+                    }
                 }
             }
         }

@@ -21,8 +21,8 @@ Designed for both standard smartphones and foldables (such as the Samsung Galaxy
   - Scope-matched FFP/SFP reticles (`Arken VPR MIL`, `Primary Arms ARC-2 MOA`, `ACSS R-Grid`, `Simple Duplex`, `Red Dot 65 MOA`, `Handgun 3-Dot`) with pinch-to-zoom, **Hold All vs. Dial Elev • Hold Wind** toggle, and true-scale target plate overlay (`Off / 6" / 10" / 18"`).
 - **Live GPS Weather & Wind Clock**
   - One-tap GPS weather & elevation sync via Open-Meteo (no API key required) plus relative wind clock and manual atmospheric override.
-- **Modular Firearms, Scopes & Ammo Arsenal**
-  - Separate **Guns**, **Scopes**, and **Ammo** libraries with Favorites (`★`), built-in starter catalog (`BallisticsCatalog.kt`), fully independent Scope selection across firearms, and optional Auto-Match Scope Unit (`MOA`/`MRAD`).
+- **Modular Firearms, Scopes, Ammo & Suppressors Arsenal**
+  - Separate **Guns**, **Scopes**, **Ammo**, and **Suppressors** libraries with Favorites (`★`), built-in starter catalog (`BallisticsCatalog.kt`, including **Gemtech GM-22** and 17 additional cans), suppressor **MV shift & zero POI shift** modeling, **Unsuppressed** 1-tap toggle, fully independent Scope selection across firearms, and optional Auto-Match Scope Unit (`MOA`/`MRAD`).
 - **Bushnell Bone Collector 1800 BLE Integration**
   - Serializes `:DU`, `:DD`, `:BP` (34-field ballistic profile + atmosphere + mover), `:AV` (6-pair powder-temp velocity table), and parses incoming laser range/angle pings cleanly.
 - **Field Themes & Text Scaling**

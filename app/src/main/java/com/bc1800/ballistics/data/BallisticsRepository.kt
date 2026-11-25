@@ -12,6 +12,7 @@ import com.bc1800.ballistics.model.AngularUnit
 import com.bc1800.ballistics.model.DefaultProfiles
 import com.bc1800.ballistics.model.FirearmSetup
 import com.bc1800.ballistics.model.ScopeSetup
+import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.UserPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -44,11 +45,12 @@ class BallisticsRepository(private val context: Context) {
         val FIREARMS_JSON = stringPreferencesKey("firearms_json")
         val SCOPES_JSON = stringPreferencesKey("scopes_json")
         val AMMO_JSON = stringPreferencesKey("ammo_json")
+        val SUPPRESSORS_JSON = stringPreferencesKey("suppressors_json")
         val ARSENAL_SEED_VERSION = stringPreferencesKey("arsenal_seed_version")
     }
 
     companion object {
-        private const val CURRENT_ARSENAL_VERSION = "v7_decoupled_scopes"
+        private const val CURRENT_ARSENAL_VERSION = "v8_suppressors_db"
     }
 
     private val safeData: Flow<Preferences> = context.ballisticsDataStore.data
@@ -77,9 +79,20 @@ class BallisticsRepository(private val context: Context) {
         .distinctUntilChanged()
         .map { raw -> decodeListOrDefault(raw, DefaultProfiles.starterAmmo) }
 
+    val suppressorsFlow: Flow<List<SuppressorSetup>> = safeData
+        .map { it[Keys.SUPPRESSORS_JSON] }
+        .distinctUntilChanged()
+        .map { raw -> decodeListAllowingEmptyOrDefault(raw, DefaultProfiles.starterSuppressors) }
+
     private inline fun <reified T> decodeListOrDefault(raw: String?, fallback: List<T>): List<T> {
         if (raw.isNullOrBlank()) return fallback
         return runCatching { json.decodeFromString<List<T>>(raw).ifEmpty { fallback } }
+            .getOrElse { fallback }
+    }
+
+    private inline fun <reified T> decodeListAllowingEmptyOrDefault(raw: String?, fallback: List<T>): List<T> {
+        if (raw.isNullOrBlank()) return fallback
+        return runCatching { json.decodeFromString<List<T>>(raw) }
             .getOrElse { fallback }
     }
 
@@ -120,9 +133,18 @@ class BallisticsRepository(private val context: Context) {
             val existingAmmoIds = existingAmmo.map { it.id }.toSet()
             val mergedAmmo = existingAmmo + DefaultProfiles.starterAmmo.filterNot { it.id in existingAmmoIds }
 
+            val hadSuppressorsStored = prefs[Keys.SUPPRESSORS_JSON] != null
+            val existingSuppressors = prefs[Keys.SUPPRESSORS_JSON]?.let {
+                runCatching { json.decodeFromString<List<SuppressorSetup>>(it) }.getOrNull()
+            }.orEmpty()
+            val existingSuppressorIds = existingSuppressors.map { it.id }.toSet()
+            val mergedSuppressors = existingSuppressors +
+                DefaultProfiles.starterSuppressors.filterNot { it.id in existingSuppressorIds }
+
             prefs[Keys.FIREARMS_JSON] = json.encodeToString(mergedGuns)
             prefs[Keys.SCOPES_JSON] = json.encodeToString(mergedScopes)
             prefs[Keys.AMMO_JSON] = json.encodeToString(mergedAmmo)
+            prefs[Keys.SUPPRESSORS_JSON] = json.encodeToString(mergedSuppressors)
             prefs[Keys.ARSENAL_SEED_VERSION] = CURRENT_ARSENAL_VERSION
 
             val currentPrefs = prefs[Keys.USER_PREFERENCES_JSON]?.let {
@@ -132,6 +154,12 @@ class BallisticsRepository(private val context: Context) {
             val validGunId = if (mergedGuns.any { it.id == currentPrefs.activeFirearmId }) currentPrefs.activeFirearmId else mergedGuns.first().id
             val validScopeId = if (mergedScopes.any { it.id == currentPrefs.activeScopeId }) currentPrefs.activeScopeId else mergedScopes.first().id
             val validAmmoId = if (mergedAmmo.any { it.id == currentPrefs.activeAmmoId }) currentPrefs.activeAmmoId else mergedAmmo.first().id
+            val validSuppressorId = if (!hadSuppressorsStored) {
+                mergedSuppressors.firstOrNull { it.id == currentPrefs.activeSuppressorId }?.id
+                    ?: mergedSuppressors.firstOrNull()?.id
+            } else {
+                currentPrefs.activeSuppressorId?.takeIf { id -> mergedSuppressors.any { it.id == id } }
+            }
 
             val activeScopeObj = mergedScopes.first { it.id == validScopeId }
             val matchedAngular = if (currentPrefs.autoMatchScopeUnit) {
@@ -145,6 +173,7 @@ class BallisticsRepository(private val context: Context) {
                     activeFirearmId = validGunId,
                     activeScopeId = validScopeId,
                     activeAmmoId = validAmmoId,
+                    activeSuppressorId = validSuppressorId,
                     angularUnit = matchedAngular
                 )
             )
@@ -188,6 +217,31 @@ class BallisticsRepository(private val context: Context) {
         return deleteItem(Keys.AMMO_JSON, DefaultProfiles.starterAmmo, ammoId, { it.id }) { prefs, fallbackId ->
             if (prefs.activeAmmoId == ammoId) prefs.copy(activeAmmoId = fallbackId) else prefs
         }
+    }
+
+    suspend fun saveSuppressor(suppressor: SuppressorSetup) {
+        upsertItem(Keys.SUPPRESSORS_JSON, DefaultProfiles.starterSuppressors, suppressor) { it.id }
+    }
+
+    suspend fun deleteSuppressor(suppressorId: String): Boolean {
+        var deleted = false
+        context.ballisticsDataStore.edit { prefs ->
+            val currentList = decodeListAllowingEmptyOrDefault(prefs[Keys.SUPPRESSORS_JSON], DefaultProfiles.starterSuppressors)
+            val updated = currentList.filterNot { it.id == suppressorId }
+            if (updated.size < currentList.size) {
+                deleted = true
+                prefs[Keys.SUPPRESSORS_JSON] = json.encodeToString(updated)
+                val currentPrefs = prefs[Keys.USER_PREFERENCES_JSON]?.let {
+                    runCatching { json.decodeFromString<UserPreferences>(it) }.getOrNull()
+                } ?: UserPreferences()
+                if (currentPrefs.activeSuppressorId == suppressorId) {
+                    prefs[Keys.USER_PREFERENCES_JSON] = json.encodeToString(
+                        currentPrefs.copy(activeSuppressorId = null)
+                    )
+                }
+            }
+        }
+        return deleted
     }
 
     private suspend inline fun <reified T> upsertItem(

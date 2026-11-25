@@ -19,6 +19,7 @@ import com.bc1800.ballistics.model.FirearmSetup
 import com.bc1800.ballistics.model.PressureUnit
 import com.bc1800.ballistics.model.RifleProfile
 import com.bc1800.ballistics.model.ScopeSetup
+import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.TemperatureUnit
 import com.bc1800.ballistics.model.UiTextScale
 import com.bc1800.ballistics.model.UserPreferences
@@ -55,13 +56,16 @@ data class AppUiState(
     val firearms: List<FirearmSetup> = DefaultProfiles.starterFirearms,
     val scopes: List<ScopeSetup> = DefaultProfiles.starterScopes,
     val ammoLoads: List<AmmoLoad> = DefaultProfiles.starterAmmo,
+    val suppressors: List<SuppressorSetup> = DefaultProfiles.starterSuppressors,
     val activeFirearm: FirearmSetup = DefaultProfiles.starterFirearms.first(),
     val activeScope: ScopeSetup = DefaultProfiles.starterScopes.first(),
     val activeAmmo: AmmoLoad = DefaultProfiles.starterAmmo.first(),
+    val activeSuppressor: SuppressorSetup? = DefaultProfiles.starterSuppressors.firstOrNull(),
     val activeProfile: RifleProfile = RifleProfile.combine(
         DefaultProfiles.starterFirearms.first(),
         DefaultProfiles.starterScopes.first(),
-        DefaultProfiles.starterAmmo.first()
+        DefaultProfiles.starterAmmo.first(),
+        DefaultProfiles.starterSuppressors.firstOrNull()
     ),
     val solverInput: SolverInputState = SolverInputState(),
     val solution: BallisticSolution? = null,
@@ -75,7 +79,8 @@ private data class CoreSetupData(
     val prefs: UserPreferences,
     val firearms: List<FirearmSetup>,
     val scopes: List<ScopeSetup>,
-    val ammoLoads: List<AmmoLoad>
+    val ammoLoads: List<AmmoLoad>,
+    val suppressors: List<SuppressorSetup>
 )
 
 private data class BallisticCalcRequest(
@@ -140,13 +145,15 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         repository.preferencesFlow,
         repository.firearmsFlow,
         repository.scopesFlow,
-        repository.ammoFlow
-    ) { prefs, firearms, scopes, ammo ->
+        repository.ammoFlow,
+        repository.suppressorsFlow
+    ) { prefs, firearms, scopes, ammo, suppressors ->
         CoreSetupData(
             prefs = prefs,
             firearms = firearms.sortedByDescending { it.isFavorite },
             scopes = scopes.sortedByDescending { it.isFavorite },
-            ammoLoads = ammo.sortedByDescending { it.isFavorite }
+            ammoLoads = ammo.sortedByDescending { it.isFavorite },
+            suppressors = suppressors.sortedByDescending { it.isFavorite }
         )
     }
 
@@ -158,7 +165,10 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         val activeFirearm = core.firearms.firstOrNull { it.id == core.prefs.activeFirearmId } ?: core.firearms.first()
         val activeScope = core.scopes.firstOrNull { it.id == core.prefs.activeScopeId } ?: core.scopes.first()
         val activeAmmo = core.ammoLoads.firstOrNull { it.id == core.prefs.activeAmmoId } ?: core.ammoLoads.first()
-        val combinedProfile = RifleProfile.combine(activeFirearm, activeScope, activeAmmo)
+        val activeSuppressor = core.prefs.activeSuppressorId?.let { id ->
+            core.suppressors.firstOrNull { it.id == id }
+        }
+        val combinedProfile = RifleProfile.combine(activeFirearm, activeScope, activeAmmo, activeSuppressor)
 
         BallisticCalcRequest(
             activeProfile = combinedProfile,
@@ -220,16 +230,21 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         val activeFirearm = core.firearms.firstOrNull { it.id == core.prefs.activeFirearmId } ?: core.firearms.first()
         val activeScope = core.scopes.firstOrNull { it.id == core.prefs.activeScopeId } ?: core.scopes.first()
         val activeAmmo = core.ammoLoads.firstOrNull { it.id == core.prefs.activeAmmoId } ?: core.ammoLoads.first()
-        val combinedProfile = RifleProfile.combine(activeFirearm, activeScope, activeAmmo)
+        val activeSuppressor = core.prefs.activeSuppressorId?.let { id ->
+            core.suppressors.firstOrNull { it.id == id }
+        }
+        val combinedProfile = RifleProfile.combine(activeFirearm, activeScope, activeAmmo, activeSuppressor)
 
         AppUiState(
             preferences = core.prefs,
             firearms = core.firearms,
             scopes = core.scopes,
             ammoLoads = core.ammoLoads,
+            suppressors = core.suppressors,
             activeFirearm = activeFirearm,
             activeScope = activeScope,
             activeAmmo = activeAmmo,
+            activeSuppressor = activeSuppressor,
             activeProfile = combinedProfile,
             solverInput = input,
             solution = calc.solution,
@@ -331,13 +346,15 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /** Applies a trued Muzzle Velocity directly onto the active Ammo load and persists it. */
+    /** Applies a trued Muzzle Velocity directly onto the active Ammo load (backing out any active suppressor MV shift) and persists it. */
     fun applyTruedMuzzleVelocity(truedMvFps: Double) {
-        val activeAmmo = uiState.value.activeAmmo
-        val roundedMv = truedMvFps.roundToInt().toDouble().coerceIn(200.0, 5500.0)
+        val current = uiState.value
+        val activeAmmo = current.activeAmmo
+        val suppShift = current.activeSuppressor?.mvShiftFps ?: 0.0
+        val roundedBaseMv = (truedMvFps - suppShift).roundToInt().toDouble().coerceIn(200.0, 5500.0)
         viewModelScope.launch {
-            repository.saveAmmo(activeAmmo.copy(muzzleVelocityFps = roundedMv))
-            showMessage("Trued MV saved: ${roundedMv.toInt()} fps for ${activeAmmo.name}")
+            repository.saveAmmo(activeAmmo.copy(muzzleVelocityFps = roundedBaseMv))
+            showMessage("Trued MV saved: ${roundedBaseMv.toInt()} fps for ${activeAmmo.name}")
         }
     }
 
@@ -489,6 +506,47 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
                 showMessage("Ammo deleted")
             } else {
                 showMessage("At least one ammo load must remain")
+            }
+        }
+    }
+
+    // --- Suppressor Management ---
+
+    fun selectActiveSuppressor(suppressorId: String?) {
+        viewModelScope.launch {
+            val target = suppressorId?.let { id ->
+                uiState.value.suppressors.firstOrNull { it.id == id } ?: return@launch
+            }
+            repository.updatePreferences { it.copy(activeSuppressorId = target?.id) }
+            showMessage(target?.let { "Suppressor: ${it.name}" } ?: "Unsuppressed (Bare Muzzle)")
+        }
+    }
+
+    fun toggleSuppressorFavorite(suppressor: SuppressorSetup) {
+        saveSuppressor(suppressor.copy(isFavorite = !suppressor.isFavorite), makeActive = false)
+    }
+
+    fun saveSuppressor(suppressor: SuppressorSetup, makeActive: Boolean = false) {
+        viewModelScope.launch {
+            repository.saveSuppressor(suppressor)
+            if (makeActive) {
+                repository.updatePreferences { it.copy(activeSuppressorId = suppressor.id) }
+            }
+            showMessage("Saved suppressor: ${suppressor.name}")
+        }
+    }
+
+    fun duplicateSuppressor(suppressor: SuppressorSetup) {
+        saveSuppressor(
+            suppressor.copy(id = UUID.randomUUID().toString(), name = "${suppressor.name} (Copy)"),
+            makeActive = true
+        )
+    }
+
+    fun deleteSuppressor(suppressorId: String) {
+        viewModelScope.launch {
+            if (repository.deleteSuppressor(suppressorId)) {
+                showMessage("Suppressor deleted")
             }
         }
     }

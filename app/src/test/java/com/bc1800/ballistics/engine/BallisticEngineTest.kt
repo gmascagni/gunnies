@@ -1,9 +1,12 @@
 package com.bc1800.ballistics.engine
 
 import com.bc1800.ballistics.model.Atmosphere
+import com.bc1800.ballistics.model.DefaultProfiles
 import com.bc1800.ballistics.model.DistanceUnit
 import com.bc1800.ballistics.model.DragModel
 import com.bc1800.ballistics.model.RifleProfile
+import com.bc1800.ballistics.model.SuppressorCategory
+import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.TwistDirection
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -313,5 +316,32 @@ class BallisticEngineTest {
 
         val outOfRange = BallisticEngine.solve(quiet22, icaoAtmosphere, rangeYards = 2500.0)
         assertFalse("Weak subsonic .22 at 2500 yd should report reachedTarget=false", outOfRange.reachedTarget)
+    }
+
+    @Test
+    fun suppressorMvShiftAndPoiShiftAffectBallisticSolution() {
+        val gun = DefaultProfiles.starterFirearms.first()
+        val scope = DefaultProfiles.starterScopes.first()
+        val ammo = DefaultProfiles.starterAmmo[1] // 1090 fps .22 LR
+        val gm22WithShift = SuppressorSetup(
+            id = "test-gm22",
+            name = "Gemtech GM-22",
+            category = SuppressorCategory.RIMFIRE,
+            mvShiftFps = 25.0,
+            poiShiftVerticalInches = 0.5,
+            poiShiftHorizontalInches = -0.25
+        )
+
+        val bareProfile = RifleProfile.combine(gun, scope, ammo, suppressor = null)
+        val suppressedProfile = RifleProfile.combine(gun, scope, ammo, suppressor = gm22WithShift)
+
+        assertEquals(ammo.muzzleVelocityFps + 25.0, suppressedProfile.muzzleVelocityFps, 0.01)
+        assertEquals("Gemtech GM-22", suppressedProfile.suppressorName)
+
+        val bareSol = BallisticEngine.solve(bareProfile, icaoAtmosphere, rangeYards = 150.0)
+        val suppSol = BallisticEngine.solve(suppressedProfile, icaoAtmosphere, rangeYards = 150.0)
+        assertTrue("Suppressor +25 fps should raise downrange velocity", suppSol.velocityFps > bareSol.velocityFps)
+        assertTrue("Suppressor +25 fps & +0.5\" high POI shift should reduce UP hold", suppSol.elevationMoa < bareSol.elevationMoa)
+        assertTrue("Suppressor left POI shift (-0.25\") should shift windage hold right", suppSol.windageMoa > bareSol.windageMoa)
     }
 }
