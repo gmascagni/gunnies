@@ -269,7 +269,8 @@ data class Atmosphere(
     val shootingBearingDeg: Double = 0.0,
     val gpsLatitude: Double? = null,
     val gpsLongitude: Double? = null,
-    val weatherUpdatedAt: String? = null
+    val weatherUpdatedAt: String? = null,
+    val manualWindOverride: Boolean = false
 )
 
 @Serializable

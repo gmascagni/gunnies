@@ -43,10 +43,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -351,10 +355,58 @@ private fun LocalWindCard(
     }
     val windPresetsMph = remember { listOf(0.0, 5.0, 10.0, 15.0, 20.0) }
 
+    val derivedCompassFromDeg = remember(atmo.shootingBearingDeg, atmo.windDirectionDeg) {
+        ((atmo.shootingBearingDeg + atmo.windDirectionDeg) % 360.0 + 360.0) % 360.0
+    }
+
+    var bearingText by remember { mutableStateOf(atmo.shootingBearingDeg.roundToInt().toString()) }
+    LaunchedEffect(atmo.shootingBearingDeg) {
+        val parsed = bearingText.toDoubleOrNull()
+        if (parsed == null || abs(parsed - atmo.shootingBearingDeg) > 0.5) {
+            bearingText = atmo.shootingBearingDeg.roundToInt().toString()
+        }
+    }
+
+    var windClockText by remember { mutableStateOf(atmo.windDirectionDeg.roundToInt().toString()) }
+    LaunchedEffect(atmo.windDirectionDeg) {
+        val parsed = windClockText.toDoubleOrNull()
+        if (parsed == null || abs(parsed - atmo.windDirectionDeg) > 0.5) {
+            windClockText = atmo.windDirectionDeg.roundToInt().toString()
+        }
+    }
+
+    var windCompassText by remember { mutableStateOf(derivedCompassFromDeg.roundToInt().toString()) }
+    LaunchedEffect(derivedCompassFromDeg) {
+        val parsed = windCompassText.toDoubleOrNull()
+        if (parsed == null || abs(parsed - derivedCompassFromDeg) > 0.7) {
+            windCompassText = derivedCompassFromDeg.roundToInt().toString()
+        }
+    }
+
+    var gustText by remember(windUnit) {
+        mutableStateOf(
+            if (atmo.windGustMph > 0.5) String.format(Locale.US, "%.0f", UnitFormatters.windValue(atmo.windGustMph, windUnit))
+            else ""
+        )
+    }
+    LaunchedEffect(atmo.windGustMph, windUnit) {
+        val dispGust = UnitFormatters.windValue(atmo.windGustMph, windUnit)
+        val parsed = gustText.toDoubleOrNull() ?: 0.0
+        if (atmo.windGustMph <= 0.5 && gustText.isNotEmpty() && parsed > 0.5) {
+            gustText = ""
+        } else if (atmo.windGustMph > 0.5 && abs(parsed - dispGust) > 0.6) {
+            gustText = String.format(Locale.US, "%.0f", dispGust)
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f)),
+        border = BorderStroke(
+            1.dp,
+            if (atmo.manualWindOverride) MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+            else MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f)
+        ),
         shape = MaterialTheme.shapes.large
     ) {
         Column(
@@ -388,6 +440,20 @@ private fun LocalWindCard(
                 )
             }
 
+            // GPS Auto vs Manual Wind Override mode switch
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = !atmo.manualWindOverride,
+                    onClick = { viewModel.setManualWindOverride(false) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                ) { Text("GPS Auto Wind", maxLines = 1) }
+                SegmentedButton(
+                    selected = atmo.manualWindOverride,
+                    onClick = { viewModel.setManualWindOverride(true) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                ) { Text("Manual Override", maxLines = 1) }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -406,27 +472,37 @@ private fun LocalWindCard(
                 )
                 WeatherMetricBox(
                     modifier = Modifier.weight(1f),
-                    label = "GPS FROM",
-                    value = atmo.meteoWindFromDeg?.let {
-                        "${WeatherService.compassCardinal(it)} ${it.roundToInt()}°"
-                    } ?: "Manual"
+                    label = if (atmo.manualWindOverride) "MANUAL FROM" else "GPS FROM",
+                    value = if (atmo.manualWindOverride) {
+                        "${WeatherService.compassCardinal(derivedCompassFromDeg)} ${derivedCompassFromDeg.roundToInt()}°"
+                    } else {
+                        atmo.meteoWindFromDeg?.let {
+                            "${WeatherService.compassCardinal(it)} ${it.roundToInt()}°"
+                        } ?: "Manual"
+                    }
                 )
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.Explore,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.tertiary,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "Direction of Fire",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Explore,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "Target Bearing (${WeatherService.compassCardinal(atmo.shootingBearingDeg)} ${atmo.shootingBearingDeg.roundToInt()}°)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -443,6 +519,19 @@ private fun LocalWindCard(
                         )
                     }
                 }
+                OutlinedTextField(
+                    value = bearingText,
+                    onValueChange = { raw ->
+                        bearingText = raw
+                        raw.toDoubleOrNull()?.let { deg ->
+                            viewModel.setShootingBearingDeg(deg)
+                        }
+                    },
+                    label = { Text("Exact Target Bearing (° True / Azimuth 0–359°)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -454,9 +543,7 @@ private fun LocalWindCard(
             ) {
                 WeatherWindClock(
                     windDirectionDeg = atmo.windDirectionDeg,
-                    onDirectionSelected = { deg ->
-                        viewModel.updateAtmosphere { it.copy(windDirectionDeg = deg) }
-                    },
+                    onDirectionSelected = { deg -> viewModel.setManualWindDirectionDeg(deg) },
                     modifier = Modifier.size(128.dp)
                 )
 
@@ -473,7 +560,9 @@ private fun LocalWindCard(
                         value = currentWindDisplay,
                         onValueChange = { displayVal ->
                             val mph = UnitFormatters.windToMph(displayVal.toDouble(), windUnit)
-                            viewModel.updateAtmosphere { it.copy(windSpeedMph = mph.coerceIn(0.0, 40.0)) }
+                            viewModel.updateAtmosphere {
+                                it.copy(windSpeedMph = mph.coerceIn(0.0, 40.0), manualWindOverride = true)
+                            }
                         },
                         valueRange = 0f..maxWindDisplay
                     )
@@ -494,12 +583,64 @@ private fun LocalWindCard(
                                 "$num ${windUnit.shortLabel}"
                             }
                             AssistChip(
-                                onClick = { viewModel.updateAtmosphere { it.copy(windSpeedMph = presetMph) } },
+                                onClick = {
+                                    viewModel.updateAtmosphere {
+                                        it.copy(windSpeedMph = presetMph, manualWindOverride = true)
+                                    }
+                                },
                                 label = { Text(chipLabel) }
                             )
                         }
                     }
                 }
+            }
+
+            // Direct Numeric Local Spot Wind & Gust Override
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = windClockText,
+                    onValueChange = { raw ->
+                        windClockText = raw
+                        raw.toDoubleOrNull()?.let { deg -> viewModel.setManualWindDirectionDeg(deg) }
+                    },
+                    label = { Text("Clock (°)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = windCompassText,
+                    onValueChange = { raw ->
+                        windCompassText = raw
+                        raw.toDoubleOrNull()?.let { deg -> viewModel.setManualWindFromCompassDeg(deg) }
+                    },
+                    label = { Text("From (°)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = gustText,
+                    onValueChange = { raw ->
+                        gustText = raw
+                        if (raw.isBlank()) {
+                            viewModel.updateAtmosphere { it.copy(windGustMph = 0.0, manualWindOverride = true) }
+                        } else {
+                            raw.toDoubleOrNull()?.let { dispVal ->
+                                val mph = UnitFormatters.windToMph(dispVal, windUnit).coerceIn(0.0, 60.0)
+                                viewModel.updateAtmosphere { it.copy(windGustMph = mph, manualWindOverride = true) }
+                            }
+                        }
+                    },
+                    label = { Text("Gust (${windUnit.shortLabel})") },
+                    placeholder = { Text("0") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }

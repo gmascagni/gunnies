@@ -293,16 +293,66 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun setShootingBearingDeg(bearingDeg: Double) {
+        val normBearing = ((bearingDeg % 360.0) + 360.0) % 360.0
         userModifiedAtmo = true
         _solverInput.update { current ->
             val atmo = current.atmosphere
-            val newRelWind = atmo.meteoWindFromDeg?.let { meteo ->
-                WeatherService.relativeWindClockDeg(meteo, bearingDeg)
-            } ?: atmo.windDirectionDeg
+            val newRelWind = if (!atmo.manualWindOverride && atmo.meteoWindFromDeg != null) {
+                WeatherService.relativeWindClockDeg(atmo.meteoWindFromDeg, normBearing)
+            } else {
+                atmo.windDirectionDeg
+            }
             current.copy(
                 atmosphere = atmo.copy(
-                    shootingBearingDeg = bearingDeg,
+                    shootingBearingDeg = normBearing,
                     windDirectionDeg = newRelWind
+                )
+            )
+        }
+    }
+
+    fun setManualWindOverride(enabled: Boolean) {
+        userModifiedAtmo = true
+        _solverInput.update { current ->
+            val atmo = current.atmosphere
+            val nextRelWind = if (!enabled && atmo.meteoWindFromDeg != null) {
+                WeatherService.relativeWindClockDeg(atmo.meteoWindFromDeg, atmo.shootingBearingDeg)
+            } else {
+                atmo.windDirectionDeg
+            }
+            current.copy(
+                atmosphere = atmo.copy(
+                    manualWindOverride = enabled,
+                    windDirectionDeg = nextRelWind
+                )
+            )
+        }
+        showMessage(if (enabled) "Wind: Manual Override" else "Wind: GPS Auto")
+    }
+
+    fun setManualWindDirectionDeg(clockDeg: Double) {
+        val normClock = ((clockDeg % 360.0) + 360.0) % 360.0
+        userModifiedAtmo = true
+        _solverInput.update { current ->
+            current.copy(
+                atmosphere = current.atmosphere.copy(
+                    windDirectionDeg = normClock,
+                    manualWindOverride = true
+                )
+            )
+        }
+    }
+
+    fun setManualWindFromCompassDeg(compassDeg: Double) {
+        val normCompass = ((compassDeg % 360.0) + 360.0) % 360.0
+        userModifiedAtmo = true
+        _solverInput.update { current ->
+            val atmo = current.atmosphere
+            val relClock = WeatherService.relativeWindClockDeg(normCompass, atmo.shootingBearingDeg)
+            current.copy(
+                atmosphere = atmo.copy(
+                    windDirectionDeg = relClock,
+                    manualWindOverride = true
                 )
             )
         }
@@ -325,15 +375,31 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
             )
             result.onSuccess { weather ->
                 userModifiedAtmo = true
-                _solverInput.update {
-                    it.copy(
-                        atmosphere = weather.atmosphere,
+                var finalAtmo = weather.atmosphere
+                var finalSummary = weather.summary
+                _solverInput.update { current ->
+                    val prev = current.atmosphere
+                    val merged = if (prev.manualWindOverride) {
+                        weather.atmosphere.copy(
+                            windSpeedMph = prev.windSpeedMph,
+                            windGustMph = prev.windGustMph,
+                            windDirectionDeg = prev.windDirectionDeg,
+                            shootingBearingDeg = prev.shootingBearingDeg,
+                            manualWindOverride = true
+                        )
+                    } else {
+                        weather.atmosphere
+                    }
+                    finalAtmo = merged
+                    finalSummary = if (prev.manualWindOverride) "${weather.summary} • Manual wind kept" else weather.summary
+                    current.copy(
+                        atmosphere = merged,
                         isFetchingWeather = false,
-                        weatherStatus = weather.summary
+                        weatherStatus = finalSummary
                     )
                 }
-                repository.updatePreferences { it.copy(defaultAtmosphere = weather.atmosphere) }
-                showMessage(weather.summary)
+                repository.updatePreferences { it.copy(defaultAtmosphere = finalAtmo) }
+                showMessage(finalSummary)
             }.onFailure { err ->
                 _solverInput.update {
                     it.copy(
