@@ -1371,3 +1371,67 @@ dialog.media-dialog::backdrop {
   color: var(--text-secondary);
   text-align: center;
 }
+
+/* Viewfinder + App Workflow Section */
+.viewfinder-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+.viewfinder-figure {
+  margin: 0;
+  background: var(--surface, #14181e);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.viewfinder-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 764 / 1024;
+  object-fit: cover;
+}
+
+.viewfinder-figure figcaption {
+  padding: 0.85rem 1rem;
+  font-size: 0.85rem;
+  color: var(--muted, #9aa4b2);
+  line-height: 1.45;
+}
+
+.viewfinder-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 1rem;
+}
+
+.viewfinder-steps > li {
+  background: var(--surface, #14181e);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 12px;
+  padding: 1rem 1.15rem;
+  line-height: 1.55;
+}
+
+.viewfinder-steps ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+@media (max-width: 760px) {
+  .viewfinder-grid {
+    grid-template-columns: 1fr;
+  }
+  .viewfinder-figure {
+    max-width: 320px;
+    margin-inline: auto;
+  }
+}

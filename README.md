@@ -67,6 +67,24 @@ The simplest way to install Gunnies Ballistics on Android (**Android 8.0 / API 2
 
 ---
 
+## Reading the Viewfinder & Using the Rangefinder (`LBC1800`)
+
+Gunnies Ballistics and the optional **Bushnell Bone Collector 1800 (`LBC1800`)** work together as a two-way field system:
+
+<p align="center">
+  <img src="docs/assets/lbc1800-viewfinder.jpg" alt="Bushnell Bone Collector 1800 viewfinder showing -14 degree angle, 50 Y line-of-sight distance, and 50 ARC horizontal distance" width="320" />
+</p>
+
+1. **Sync Your Profile First:** Press **Fire** on your Bone Collector 1800 to wake its Bluetooth radio, connect in the app (or let **Auto-Reconnect** link automatically), and tap **Sync** (or **Prep Field** on the Solver HUD) to push your active gun, scope, ammo, and live weather (`:BP` and `:AV` frames) to the unit.
+2. **Aim & Press Fire:** Place the center aiming circle on your target and press **Fire** to lase the distance and angle.
+3. **Read the Viewfinder HUD:**
+   - **Left (`-14°`):** Your incline/declination angle relative to level ground.
+   - **Center (`50 Y`):** Line-of-Sight (LOS) distance directly to the target.
+   - **Bottom (`50`):** True horizontal ARC distance for shots inside 100 yards. For targets at **100–800 yards**, this readout switches automatically to your **onboard ballistic holdover** (`MOA` or `MRAD`) calculated from your synced profile.
+4. **Check the App HUD:** Whenever connected over BLE, each laser ping streams the range (`50 Y`) and angle (`-14°`) to **Gunnies Ballistics**, automatically updating your Solver HUD, DOPE table, and scope reticle aimpoint without touching your phone — including sub-100 yd rimfire holdovers and long-range solutions beyond the rangefinder's 800-yard onboard cap.
+
+---
+
 ## Ballistic Model Technical Reference ("3-DOF+")
 
 ### What "3-DOF+" Means in Gunnies Ballistics
@@ -206,11 +224,24 @@ app/src/main/java/com/gunnies/ballistics/
 ```powershell
 .\gradlew.bat testDebugUnitTest
 ```
-Includes **44 unit tests** across:
+Includes **46 unit tests** across:
 - `BallisticEngineTest` (**19 tests**): G1/G7 table alignment, 3D inclined wind, 3-zone wind banding, stepped Multi-BC smooth blending, DSF interpolation & truing, Coriolis, aero jump, MV truing, MPBR, single-pass DOPE consistency, JSON backup codec, catalog counts.
 - `BallisticValidationTest` (**1 multi-fixture suite / 8 external benchmarks**): compares Gunnies against live-captured reference tables from Berger (Bryan Litz G1/G7) and ShootersCalculator across `.22 LR` subsonic, `.223 Rem`, `.308 Win`, `6.5 Creedmoor`, `.300 Win Mag`, and `1,200 yd` high-altitude `+15°` inclined fire. See **[VALIDATION.md](VALIDATION.md)** for full tables, tolerances, and deviation notes.
 - `CalibrationTest` (**5 tests**): Multi-point Levenberg-Marquardt MV+BC recovery (`6.5 CM` single-BC & multi-BC), single-point & Custom-Cd MV-only fallbacks, cold-bore/logbook atmospheric snapshot import, and Tall-Target MRAD/MOA SSF math & bounds.
 - `HitProbabilityTest` (**3 tests**): Exact Rayleigh CDF verification for isotropic circular Gaussian dispersion, monotonic plate-size & wind-uncertainty behavior, and subsonic `.22 LR` range-uncertainty dominance.
 - `CustomDragAndImportTest` (**6 tests**): Custom `Cd(Mach)` equivalence against G7 (`< 0.015 MOA` at 1,000 yd), JSON/CSV round-trip & validation errors, LBC1800 safe drag-model fallback, Strelok XML/key=value/CSV profile import, and attributed manufacturer catalog verification.
 - `HardwareIntegrationTest` (**3 tests**): Bluetooth SIG ESS (`0x181A`) temperature/humidity/pressure/wind decoding, malformed-payload rejection, Kestrel discovery, and phone barometer hPa→inHg conversion.
+- `ReticleDefinitionTest` (**2 tests**): Data-driven JSON reticle schema validation and round-trip serialization across all 7 built-in reticles and custom definitions.
 - `Lbc1800ProtocolTest` (**7 tests**): XOR checksum verification, HDLC chunked deframing, `:BP` / `:AV` frame encoding, primary BC & range-weighted average wind serialization.
+
+---
+
+## Documentation, Privacy & License
+
+- **Validation Report:** [`VALIDATION.md`](VALIDATION.md)
+- **Contributing (Reticles & Ammo Data):** [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- **Hardware Protocols & Evaluation:** [`docs/hardware-protocols.md`](docs/hardware-protocols.md)
+- **Google Play Readiness & Privacy Policy:** [`docs/google-play-readiness.md`](docs/google-play-readiness.md) • [`docs/PRIVACY_POLICY.md`](docs/PRIVACY_POLICY.md)
+- **KMP / iOS Feasibility Study:** [`docs/kmp-ios-feasibility.md`](docs/kmp-ios-feasibility.md)
+- **Changelog:** [`CHANGELOG.md`](CHANGELOG.md)
+- **License:** Licensed under the **[Apache License 2.0](LICENSE)**. Always confirm ballistic solutions on the range with safe live-fire verification.
