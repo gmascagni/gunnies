@@ -200,7 +200,7 @@ private fun GunniesAppRoot(viewModel: BallisticsViewModel) {
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         if (results.values.any { it }) {
-            viewModel.fetchLiveWeather()
+            viewModel.fetchLiveWeather(autoSyncRangefinder = true)
         }
     }
 
@@ -243,7 +243,7 @@ private fun GunniesAppRoot(viewModel: BallisticsViewModel) {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
         if (hasAny) {
-            viewModel.fetchLiveWeather()
+            viewModel.fetchLiveWeather(autoSyncRangefinder = true)
         } else {
             weatherPermissionLauncher.launch(needed)
         }

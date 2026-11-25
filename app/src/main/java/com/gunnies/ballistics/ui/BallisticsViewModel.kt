@@ -4,10 +4,13 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.gunnies.ballistics.ble.BleConnectionState
+import com.gunnies.ballistics.ble.BleDeviceKind
 import com.gunnies.ballistics.ble.BleUiState
 import com.gunnies.ballistics.ble.RangefinderBleManager
 import com.gunnies.ballistics.data.ArsenalBackupCodec
 import com.gunnies.ballistics.data.BallisticsRepository
+import com.gunnies.ballistics.data.BarometerSensorService
 import com.gunnies.ballistics.data.UnitFormatters
 import com.gunnies.ballistics.data.WeatherService
 import com.gunnies.ballistics.engine.BallisticEngine
@@ -138,6 +141,8 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
 
     private val repository = BallisticsRepository(application.applicationContext)
     val bleManager = RangefinderBleManager(application.applicationContext)
+    private val barometerService = BarometerSensorService(application.applicationContext)
+    val isBarometerAvailable: Boolean get() = barometerService.isAvailable
 
     private val _solverInput = MutableStateFlow(SolverInputState())
     private val _activeStageCardId = MutableStateFlow<String?>(null)
@@ -157,6 +162,11 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             repository.ensureCustomArsenalSeeded()
             val savedPrefs = repository.preferencesFlow.first()
+            bleManager.setKeepaliveEnabled(savedPrefs.bleKeepaliveEnabled)
+            bleManager.setAutoReconnectEnabled(savedPrefs.bleAutoReconnect)
+            if (savedPrefs.usePhoneBarometer && barometerService.isAvailable) {
+                startBarometerUpdates()
+            }
             if (!userModifiedAtmo) {
                 _solverInput.update { it.copy(atmosphere = savedPrefs.defaultAtmosphere) }
             }
@@ -171,6 +181,24 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
             }
             val angSuffix = reading.angleDegrees?.let { String.format(Locale.US, " (%+.0f°)", it) } ?: ""
             showMessage("Rangefinder: ${reading.distanceYards.toInt()} yd$angSuffix")
+        }
+
+        bleManager.setOnAtmosphereListener { env ->
+            userModifiedAtmo = true
+            _solverInput.update { current ->
+                val prev = current.atmosphere
+                current.copy(
+                    atmosphere = prev.copy(
+                        temperatureF = env.temperatureF ?: prev.temperatureF,
+                        pressureInHg = env.stationPressureInHg ?: prev.pressureInHg,
+                        pressureIsStation = if (env.stationPressureInHg != null) true else prev.pressureIsStation,
+                        humidityPercent = env.humidityPercent ?: prev.humidityPercent,
+                        windSpeedMph = if (!prev.isThreeZoneWind && env.windSpeedMph != null) env.windSpeedMph else prev.windSpeedMph,
+                        weatherUpdatedAt = "${env.sourceLabel} (Live)"
+                    ),
+                    weatherStatus = "Live atmosphere from ${env.sourceLabel}"
+                )
+            }
         }
     }
 
@@ -518,7 +546,7 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun fetchLiveWeather() {
+    fun fetchLiveWeather(autoSyncRangefinder: Boolean = false) {
         viewModelScope.launch {
             _solverInput.update { it.copy(isFetchingWeather = true, weatherStatus = "Acquiring GPS & local weather...") }
             val result = WeatherService.fetchLocalAtmosphere(
@@ -529,10 +557,13 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
                 userModifiedAtmo = true
                 var finalAtmo = weather.atmosphere
                 var finalSummary = weather.summary
+                val baroInHg = if (preferencesFlow.value.usePhoneBarometer) {
+                    barometerService.latestReading.value?.stationPressureInHg
+                } else null
                 _solverInput.update { current ->
                     val prev = current.atmosphere
                     val keepManual = prev.manualWindOverride || prev.isThreeZoneWind
-                    val merged = if (keepManual) {
+                    val baseMerged = if (keepManual) {
                         weather.atmosphere.copy(
                             windSpeedMph = prev.windSpeedMph,
                             windGustMph = prev.windGustMph,
@@ -544,6 +575,11 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
                     } else {
                         weather.atmosphere
                     }
+                    val merged = if (baroInHg != null) {
+                        baseMerged.copy(pressureInHg = baroInHg, pressureIsStation = true)
+                    } else {
+                        baseMerged
+                    }
                     finalAtmo = merged
                     finalSummary = if (keepManual) "${weather.summary} • Manual wind kept" else weather.summary
                     current.copy(
@@ -553,7 +589,19 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
                     )
                 }
                 repository.updatePreferences { it.copy(defaultAtmosphere = finalAtmo) }
-                showMessage(finalSummary)
+                if (autoSyncRangefinder &&
+                    bleStateFlow.value.connectionState == BleConnectionState.CONNECTED &&
+                    bleStateFlow.value.connectedDeviceKind == BleDeviceKind.BUSHNELL_LBC1800
+                ) {
+                    bleManager.syncProfile(
+                        profile = uiState.value.activeProfile,
+                        atmosphere = finalAtmo,
+                        moverSpeedMph = _solverInput.value.moverSpeedMph
+                    )
+                    showMessage("Field Ready: GPS weather + LBC1800 synced")
+                } else {
+                    showMessage(finalSummary)
+                }
             }.onFailure { err ->
                 _solverInput.update {
                     it.copy(
@@ -1147,7 +1195,7 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun connectBleDevice(address: String, name: String) {
-        bleManager.connect(address, name)
+        bleManager.connect(address, name, autoConnect = false)
         viewModelScope.launch {
             repository.updatePreferences {
                 it.copy(lastConnectedBleAddress = address, lastConnectedBleName = name)
@@ -1155,9 +1203,58 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun reconnectLastBleDevice(autoConnect: Boolean = true) {
+        val prefs = preferencesFlow.value
+        val addr = prefs.lastConnectedBleAddress
+        if (addr.isNullOrBlank()) {
+            showMessage("No saved rangefinder yet — tap Scan first.")
+            return
+        }
+        bleManager.connect(addr, prefs.lastConnectedBleName, autoConnect = autoConnect)
+    }
+
+    fun setBleAutoReconnect(enabled: Boolean) {
+        bleManager.setAutoReconnectEnabled(enabled)
+        updatePref("BLE Auto-Reconnect: ${if (enabled) "ON" else "OFF"}") {
+            it.copy(bleAutoReconnect = enabled)
+        }
+    }
+
+    fun setBleKeepaliveEnabled(enabled: Boolean) {
+        bleManager.setKeepaliveEnabled(enabled)
+        updatePref("BLE Keepalive (:DU): ${if (enabled) "ON" else "OFF"}") {
+            it.copy(bleKeepaliveEnabled = enabled)
+        }
+    }
+
+    fun setUsePhoneBarometer(enabled: Boolean) {
+        if (enabled && !barometerService.isAvailable) {
+            showMessage("No barometer sensor found on this phone.")
+            return
+        }
+        if (enabled) startBarometerUpdates() else barometerService.stopListening()
+        updatePref("Phone Barometer: ${if (enabled) "ON" else "OFF"}") {
+            it.copy(usePhoneBarometer = enabled)
+        }
+    }
+
+    private fun startBarometerUpdates() {
+        barometerService.startListening { reading ->
+            userModifiedAtmo = true
+            _solverInput.update { current ->
+                current.copy(
+                    atmosphere = current.atmosphere.copy(
+                        pressureInHg = reading.stationPressureInHg,
+                        pressureIsStation = true
+                    )
+                )
+            }
+        }
+    }
+
     fun syncActiveProfileToRangefinder() {
         val current = uiState.value
-        bleManager.syncProfileToLbc1800(
+        bleManager.syncProfile(
             profile = current.activeProfile,
             atmosphere = current.solverInput.atmosphere,
             moverSpeedMph = current.solverInput.moverSpeedMph
@@ -1177,6 +1274,7 @@ class BallisticsViewModel(application: Application) : AndroidViewModel(applicati
 
     override fun onCleared() {
         super.onCleared()
+        barometerService.stopListening()
         bleManager.shutdown()
     }
 }

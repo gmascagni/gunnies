@@ -48,6 +48,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -120,6 +121,8 @@ fun WeatherScreen(
                         prefs = prefs,
                         isFetchingWeather = input.isFetchingWeather,
                         weatherStatus = input.weatherStatus,
+                        isBarometerAvailable = viewModel.isBarometerAvailable,
+                        onToggleBarometer = { viewModel.setUsePhoneBarometer(it) },
                         onRequestLocationWeather = onRequestLocationWeather,
                         onSaveDefault = { viewModel.saveCurrentAtmosphereAsDefault() }
                     )
@@ -159,6 +162,8 @@ fun WeatherScreen(
                         prefs = prefs,
                         isFetchingWeather = input.isFetchingWeather,
                         weatherStatus = input.weatherStatus,
+                        isBarometerAvailable = viewModel.isBarometerAvailable,
+                        onToggleBarometer = { viewModel.setUsePhoneBarometer(it) },
                         onRequestLocationWeather = onRequestLocationWeather,
                         onSaveDefault = { viewModel.saveCurrentAtmosphereAsDefault() }
                     )
@@ -191,6 +196,8 @@ private fun GpsWeatherStationCard(
     prefs: UserPreferences,
     isFetchingWeather: Boolean,
     weatherStatus: String?,
+    isBarometerAvailable: Boolean,
+    onToggleBarometer: (Boolean) -> Unit,
     onRequestLocationWeather: () -> Unit,
     onSaveDefault: () -> Unit
 ) {
@@ -336,6 +343,36 @@ private fun GpsWeatherStationCard(
                     modifier = Modifier.weight(1f),
                     label = "MACH 1",
                     value = "${air.speedOfSoundFps.roundToInt()} fps"
+                )
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Phone Barometer (Station Pressure)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (isBarometerAvailable) {
+                            "Use onboard pressure sensor (100% offline, no altitude conversion)"
+                        } else {
+                            "No barometric pressure sensor detected on this device"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = prefs.usePhoneBarometer && isBarometerAvailable,
+                    enabled = isBarometerAvailable,
+                    onCheckedChange = onToggleBarometer
                 )
             }
         }

@@ -388,7 +388,7 @@ private fun BleConnectionCard(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "BONE COLLECTOR 1800",
+                        text = "RANGEFINDER & KESTREL BLE",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -450,6 +450,57 @@ private fun BleConnectionCard(
                 ) {
                     Text("Refresh Device Info (:DU + :DD)")
                 }
+            } else if (!prefs.lastConnectedBleAddress.isNullOrBlank()) {
+                Button(
+                    onClick = { viewModel.reconnectLastBleDevice(autoConnect = true) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    Icon(Icons.Default.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Auto-Reconnect ${prefs.lastConnectedBleName ?: "Last Device"}")
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Auto-Reconnect on Wake", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Silently reconnects when you press Fire after rangefinder sleep",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = prefs.bleAutoReconnect,
+                    onCheckedChange = { viewModel.setBleAutoReconnect(it) }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Keepalive Heartbeat (:DU / 18s)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (ble.keepaliveActive) "Active — keeping LBC1800 awake longer"
+                        else "Sends periodic :DU ping to extend awake session (uses slightly more CR2 battery)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = prefs.bleKeepaliveEnabled,
+                    onCheckedChange = { viewModel.setBleKeepaliveEnabled(it) }
+                )
             }
 
             Row(

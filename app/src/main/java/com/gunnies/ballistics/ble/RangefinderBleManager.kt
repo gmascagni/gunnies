@@ -28,6 +28,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 data class ScannedBleDevice(
@@ -35,6 +36,7 @@ data class ScannedBleDevice(
     val name: String,
     val rssi: Int,
     val isLikelyBushnell: Boolean,
+    val deviceKind: BleDeviceKind = if (isLikelyBushnell) BleDeviceKind.BUSHNELL_LBC1800 else BleDeviceKind.GENERIC_BLE,
     val serviceUuids: List<String> = emptyList()
 )
 
@@ -83,25 +85,29 @@ data class BleUiState(
     val scannedDevices: List<ScannedBleDevice> = emptyList(),
     val connectedDeviceName: String? = null,
     val connectedDeviceAddress: String? = null,
+    val connectedDeviceKind: BleDeviceKind = BleDeviceKind.GENERIC_BLE,
     val firmwareVersion: String? = null,
     val lastSyncMessage: String? = null,
     val ackCount: Int = 0,
+    val keepaliveActive: Boolean = false,
+    val waitingForAutoReconnect: Boolean = false,
     val services: List<GattServiceInfo> = emptyList(),
     val packetLogs: List<BlePacketLog> = emptyList(),
-    val statusMessage: String = "Press Fire on your Bone Collector 1800 to wake Bluetooth, then tap Scan."
+    val statusMessage: String = "Press Fire on your Bone Collector 1800 (or wake Kestrel) and tap Scan."
 )
 
 /**
- * Thread-safe Native Android BLE manager + GATT Inspector for Bushnell Bone Collector 1800 (LBC1800).
- * All mutable GATT state and serial write/read queues are serialized under [gattLock] and
- * paced cleanly across BLE callbacks so Main and Binder threads never race.
+ * Thread-safe Native Android BLE manager + GATT Inspector implementing [RangefinderClient]
+ * for Bushnell Bone Collector 1800 (LBC1800) and Bluetooth SIG Environmental Sensing (Kestrel/ESS).
+ * Supports periodic :DU keepalive heartbeat and OS-level BLE auto-reconnect on wake.
  */
-class RangefinderBleManager(private val context: Context) {
+class RangefinderBleManager(private val context: Context) : RangefinderClient {
 
     companion object {
         private const val TAG = "Gunnies_BLE"
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         const val NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+        private const val KEEPALIVE_INTERVAL_SEC = 18L
 
         private val TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS", Locale.US)
         private val DIST_REGEX = Regex("""(?i)(?:rng|dist|d|los|yd|m)\s*[:=]\s*(\d+(?:\.\d+)?)""")
@@ -126,13 +132,14 @@ class RangefinderBleManager(private val context: Context) {
         get() = bluetoothManager?.adapter
 
     private val _state = MutableStateFlow(BleUiState())
-    val state: StateFlow<BleUiState> = _state.asStateFlow()
+    override val state: StateFlow<BleUiState> = _state.asStateFlow()
 
     private val gattLock = Any()
     private val pacingExecutor = Executors.newSingleThreadScheduledExecutor()
 
     private var activeGatt: BluetoothGatt? = null
     private var activeScanCallback: ScanCallback? = null
+    private var keepaliveTask: ScheduledFuture<*>? = null
     private val pendingNotificationQueue = ArrayDeque<BluetoothGattCharacteristic>()
     private val pendingReadQueue = ArrayDeque<BluetoothGattCharacteristic>()
     private val pendingWrites = ArrayDeque<QueuedWrite>()
@@ -140,15 +147,50 @@ class RangefinderBleManager(private val context: Context) {
     private val hdlcDeframer = Lbc1800Protocol.StreamDeframer()
     private val rawAsciiLineBuffer = StringBuilder()
 
+    @Volatile private var keepaliveEnabled: Boolean = true
+    @Volatile private var autoReconnectEnabled: Boolean = true
+    @Volatile private var userRequestedDisconnect: Boolean = false
+    @Volatile private var lastTargetAddress: String? = null
+    @Volatile private var lastTargetName: String? = null
+
     @Volatile
     private var onReadingCallback: ((RangefinderReading) -> Unit)? = null
 
-    fun setOnReadingListener(listener: (RangefinderReading) -> Unit) {
+    @Volatile
+    private var onAtmosphereCallback: ((LiveAtmosphereReading) -> Unit)? = null
+
+    override fun setOnReadingListener(listener: (RangefinderReading) -> Unit) {
         onReadingCallback = listener
     }
 
+    override fun setOnAtmosphereListener(listener: (LiveAtmosphereReading) -> Unit) {
+        onAtmosphereCallback = listener
+    }
+
+    override fun setKeepaliveEnabled(enabled: Boolean) {
+        keepaliveEnabled = enabled
+        if (!enabled) {
+            stopKeepaliveLoop()
+        } else if (_state.value.connectionState == BleConnectionState.CONNECTED &&
+            _state.value.connectedDeviceKind == BleDeviceKind.BUSHNELL_LBC1800
+        ) {
+            startKeepaliveLoop()
+        }
+    }
+
+    override fun setAutoReconnectEnabled(enabled: Boolean) {
+        autoReconnectEnabled = enabled
+        if (!enabled && _state.value.waitingForAutoReconnect) {
+            disconnect()
+        }
+    }
+
+    override fun syncProfile(profile: RifleProfile, atmosphere: Atmosphere, moverSpeedMph: Double) {
+        syncProfileToLbc1800(profile, atmosphere, moverSpeedMph)
+    }
+
     @SuppressLint("MissingPermission")
-    fun startScan() {
+    override fun startScan() {
         val adapter = bluetoothAdapter
         if (adapter == null || !adapter.isEnabled) {
             _state.update {
@@ -180,13 +222,20 @@ class RangefinderBleManager(private val context: Context) {
                         it.equals(Lbc1800Protocol.SERVICE_UUID, ignoreCase = true) ||
                             it.equals(NUS_SERVICE_UUID, ignoreCase = true)
                     }
+                val isWeather = KestrelBleProtocol.isLikelyWeatherDevice(rawName, serviceUuids)
+                val kind = when {
+                    isBushnell -> BleDeviceKind.BUSHNELL_LBC1800
+                    isWeather -> BleDeviceKind.KESTREL_WEATHER
+                    else -> BleDeviceKind.GENERIC_BLE
+                }
 
                 synchronized(discoveredMap) {
                     discoveredMap[address] = ScannedBleDevice(
                         address = address,
                         name = rawName,
                         rssi = result.rssi,
-                        isLikelyBushnell = isBushnell,
+                        isLikelyBushnell = isBushnell || isWeather,
+                        deviceKind = kind,
                         serviceUuids = serviceUuids
                     )
                     val sorted = discoveredMap.values.sortedWith(
@@ -242,7 +291,7 @@ class RangefinderBleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun stopScan() {
+    override fun stopScan() {
         val cb = activeScanCallback ?: return
         runCatching { bluetoothAdapter?.bluetoothLeScanner?.stopScan(cb) }
         activeScanCallback = null
@@ -257,9 +306,9 @@ class RangefinderBleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun connect(address: String, displayName: String? = null) {
+    override fun connect(address: String, displayName: String?, autoConnect: Boolean) {
         stopScan()
-        disconnect()
+        closeActiveGattInternal()
 
         val adapter = bluetoothAdapter ?: return
         val device = runCatching { adapter.getRemoteDevice(address) }.getOrNull()
@@ -269,6 +318,10 @@ class RangefinderBleManager(private val context: Context) {
         }
 
         val resolvedName = displayName ?: runCatching { device.name }.getOrNull() ?: address
+        userRequestedDisconnect = false
+        lastTargetAddress = address
+        lastTargetName = resolvedName
+
         _state.update {
             it.copy(
                 connectionState = BleConnectionState.CONNECTING,
@@ -276,18 +329,25 @@ class RangefinderBleManager(private val context: Context) {
                 connectedDeviceName = resolvedName,
                 firmwareVersion = null,
                 lastSyncMessage = null,
+                keepaliveActive = false,
+                waitingForAutoReconnect = autoConnect,
                 services = emptyList(),
-                statusMessage = "Connecting to $resolvedName..."
+                statusMessage = if (autoConnect) {
+                    "Auto-reconnect armed for $resolvedName — press Fire to wake."
+                } else {
+                    "Connecting to $resolvedName..."
+                }
             )
         }
-        appendLog("SYS", "-", "", "", "Connecting to $address")
+        appendLog("SYS", "-", "", "", if (autoConnect) "Auto-reconnect armed for $address" else "Connecting to $address")
 
         val gatt = runCatching {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            device.connectGatt(context, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
         }.getOrElse { err ->
             _state.update {
                 it.copy(
                     connectionState = BleConnectionState.DISCONNECTED,
+                    waitingForAutoReconnect = false,
                     statusMessage = "Bluetooth permission or connection error: ${err.message}"
                 )
             }
@@ -299,7 +359,8 @@ class RangefinderBleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun disconnect() {
+    private fun closeActiveGattInternal() {
+        stopKeepaliveLoop()
         val gattToClose: BluetoothGatt?
         synchronized(gattLock) {
             pendingNotificationQueue.clear()
@@ -315,13 +376,51 @@ class RangefinderBleManager(private val context: Context) {
             runCatching { gatt.disconnect() }
             runCatching { gatt.close() }
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun disconnect() {
+        userRequestedDisconnect = true
+        closeActiveGattInternal()
         _state.update {
             it.copy(
                 connectionState = BleConnectionState.DISCONNECTED,
+                keepaliveActive = false,
+                waitingForAutoReconnect = false,
                 services = emptyList(),
                 statusMessage = "Disconnected."
             )
         }
+    }
+
+    private fun startKeepaliveLoop() {
+        stopKeepaliveLoop()
+        if (!keepaliveEnabled) return
+        val future = pacingExecutor.scheduleWithFixedDelay(
+            {
+                if (_state.value.connectionState == BleConnectionState.CONNECTED &&
+                    _state.value.connectedDeviceKind == BleDeviceKind.BUSHNELL_LBC1800 &&
+                    keepaliveEnabled
+                ) {
+                    enqueueLbcCommand(Lbc1800Protocol.buildDeviceUnlockCommand(), "Keepalive (:DU)", delayMsAfter = 40L)
+                }
+            },
+            KEEPALIVE_INTERVAL_SEC,
+            KEEPALIVE_INTERVAL_SEC,
+            TimeUnit.SECONDS
+        )
+        synchronized(gattLock) { keepaliveTask = future }
+        _state.update { it.copy(keepaliveActive = true) }
+    }
+
+    private fun stopKeepaliveLoop() {
+        val prev = synchronized(gattLock) {
+            val t = keepaliveTask
+            keepaliveTask = null
+            t
+        }
+        prev?.cancel(false)
+        _state.update { it.copy(keepaliveActive = false) }
     }
 
     /** Sends the verified Bone Collector 1800 unlock + device query sequence (:DU + :DD). */
@@ -471,7 +570,7 @@ class RangefinderBleManager(private val context: Context) {
         }
     }
 
-    fun simulateRangePing(distanceYards: Double, angleDegrees: Double) {
+    override fun simulateRangePing(distanceYards: Double, angleDegrees: Double) {
         val reading = RangefinderReading(
             distanceYards = distanceYards,
             angleDegrees = angleDegrees,
@@ -515,10 +614,38 @@ class RangefinderBleManager(private val context: Context) {
         return sb.toString()
     }
 
-    fun shutdown() {
+    override fun shutdown() {
         stopScan()
         disconnect()
         pacingExecutor.shutdownNow()
+    }
+
+    private fun handleUnexpectedDisconnect(reason: String) {
+        val addr = lastTargetAddress
+        val name = lastTargetName
+        closeActiveGattInternal()
+        if (autoReconnectEnabled && !userRequestedDisconnect && !addr.isNullOrBlank()) {
+            appendLog("SYS", "-", "", "", "$reason — arming auto-reconnect for $addr")
+            pacingExecutor.schedule(
+                {
+                    if (!userRequestedDisconnect && autoReconnectEnabled) {
+                        connect(addr, name, autoConnect = true)
+                    }
+                },
+                1200L,
+                TimeUnit.MILLISECONDS
+            )
+        } else {
+            _state.update {
+                it.copy(
+                    connectionState = BleConnectionState.DISCONNECTED,
+                    keepaliveActive = false,
+                    waitingForAutoReconnect = false,
+                    services = emptyList(),
+                    statusMessage = "$reason. Wake rangefinder and retry."
+                )
+            }
+        }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -526,10 +653,7 @@ class RangefinderBleManager(private val context: Context) {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 appendLog("SYS", "-", "", "", "GATT error status=$status")
-                disconnect()
-                _state.update {
-                    it.copy(statusMessage = "Connection dropped (status $status). Wake rangefinder and retry.")
-                }
+                handleUnexpectedDisconnect("Connection dropped (status $status)")
                 return
             }
             when (newState) {
@@ -538,6 +662,7 @@ class RangefinderBleManager(private val context: Context) {
                     _state.update {
                         it.copy(
                             connectionState = BleConnectionState.DISCOVERING,
+                            waitingForAutoReconnect = false,
                             statusMessage = "Connected — inspecting GATT services..."
                         )
                     }
@@ -546,7 +671,7 @@ class RangefinderBleManager(private val context: Context) {
 
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     appendLog("SYS", "-", "", "", "Peripheral disconnected")
-                    disconnect()
+                    handleUnexpectedDisconnect("Rangefinder went to sleep")
                 }
             }
         }
@@ -603,14 +728,28 @@ class RangefinderBleManager(private val context: Context) {
                 pendingReadQueue.addAll(readFound)
             }
 
+            val hasLbc = gatt.getService(UUID.fromString(Lbc1800Protocol.SERVICE_UUID)) != null
+            val hasEss = gatt.getService(UUID.fromString(KestrelBleProtocol.ESS_SERVICE_UUID)) != null
+            val detectedKind = when {
+                hasLbc -> BleDeviceKind.BUSHNELL_LBC1800
+                hasEss -> BleDeviceKind.KESTREL_WEATHER
+                else -> BleDeviceKind.GENERIC_BLE
+            }
+
             _state.update {
                 it.copy(
                     connectionState = BleConnectionState.CONNECTED,
+                    connectedDeviceKind = detectedKind,
+                    waitingForAutoReconnect = false,
                     services = mappedServices,
-                    statusMessage = "Connected (${mappedServices.size} services). Handshaking with LBC1800..."
+                    statusMessage = when (detectedKind) {
+                        BleDeviceKind.BUSHNELL_LBC1800 -> "Connected to LBC1800 (${mappedServices.size} services). Handshaking..."
+                        BleDeviceKind.KESTREL_WEATHER -> "Connected to Kestrel / ESS Weather (${mappedServices.size} services). Reading live atmosphere..."
+                        BleDeviceKind.GENERIC_BLE -> "Connected (${mappedServices.size} services)."
+                    }
                 )
             }
-            appendLog("SYS", "-", "", "", "Discovered ${mappedServices.size} services; subscribing to ${notifyFound.size} notify chars")
+            appendLog("SYS", "-", "", "", "Discovered ${mappedServices.size} services (${detectedKind.label}); subscribing to ${notifyFound.size} notify chars")
             subscribeNextNotification(gatt)
         }
 
@@ -732,6 +871,7 @@ class RangefinderBleManager(private val context: Context) {
         if (next == null) {
             if (gatt.getService(UUID.fromString(Lbc1800Protocol.SERVICE_UUID)) != null) {
                 queryLbc1800DeviceInfo()
+                if (keepaliveEnabled) startKeepaliveLoop()
             }
             return
         }
@@ -787,6 +927,19 @@ class RangefinderBleManager(private val context: Context) {
             }
             for (frame in decodedFrames) {
                 handleLbcDecodedMessage(frame)
+            }
+        }
+
+        if (KestrelBleProtocol.isEssCharacteristic(charUuid)) {
+            val env = KestrelBleProtocol.decodeEssCharacteristic(
+                charUuid = charUuid,
+                bytes = bytes,
+                sourceLabel = _state.value.connectedDeviceName ?: "Kestrel / ESS"
+            )
+            if (env != null) {
+                appendLog("RX", charUuid, hex, ascii, "ESS Atmosphere: ${env.sourceLabel}")
+                onAtmosphereCallback?.invoke(env)
+                return
             }
         }
 

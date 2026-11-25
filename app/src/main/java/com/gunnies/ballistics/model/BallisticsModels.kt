@@ -506,6 +506,9 @@ data class UserPreferences(
     ),
     val lastConnectedBleAddress: String? = null,
     val lastConnectedBleName: String? = null,
+    val bleAutoReconnect: Boolean = true,
+    val bleKeepaliveEnabled: Boolean = true,
+    val usePhoneBarometer: Boolean = false,
     val defaultAtmosphere: Atmosphere = Atmosphere()
 )
 

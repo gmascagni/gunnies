@@ -57,9 +57,11 @@ The simplest way to install Gunnies Ballistics on Android (**Android 8.0 / API 2
 - **Live GPS Weather & Offline Operation** (`WeatherService.kt`, `WeatherScreen.kt`)
   - **Sync GPS** fetches current temperature, relative humidity, surface (station) pressure, wind speed, gusts, and meteorological wind direction from **Open-Meteo** (requires GPS + internet; no API key required) and computes Density Altitude and relative wind clock from your target bearing.
   - All core ballistic calculations, manual weather/wind entry, saved weather defaults, profiles, reticles, stage cards, DOPE tables, logbook, and JSON backups work **100% offline**.
-- **Optional Bushnell Bone Collector 1800 (`LBC1800`) BLE Sync** (`Lbc1800Protocol.kt`, `RangefinderBleManager.kt`)
-  - Optional Bluetooth companion mode: wakes/unlocks (`:DU`), queries device info (`:DD`), pushes active rifle profile + atmosphere + mover (`:BP`) and 6-pair powder-temp velocity table (`:AV`), and ingests live laser range & incline pings.
-  - Hardware notes: the `LBC1800` protocol accepts a single BC (Gunnies sends your primary/highest-velocity BC) and a single wind vector (Gunnies sends the `5/9`, `3/9`, `1/9` range-weighted vector average when 3-Zone Wind is active). Onboard rangefinder solutions cap at **800 yards**; Gunnies solves beyond 800 yards on the phone (up to 1,800 yd/m on DOPE cards).
+- **Hardware Integrations: Bushnell `LBC1800`, Kestrel / SIG ESS BLE & Phone Barometer** (`HardwareInterfaces.kt`, `RangefinderBleManager.kt`, `KestrelBleProtocol.kt`, `BarometerSensorService.kt`)
+  - Refactored behind `RangefinderClient` so additional rangefinders and environmental sensors plug in cleanly (see [Hardware Protocol Reference](docs/hardware-protocols.md) for evaluated devices and proprietary-protocol boundaries).
+  - **Bushnell Bone Collector 1800 (`LBC1800`)**: wakes/unlocks (`:DU`), queries device info (`:DD`), pushes active rifle profile + atmosphere + mover (`:BP`) and 6-pair powder-temp velocity table (`:AV`), ingests live laser range & incline pings, supports **Auto-Reconnect on Wake**, optional **18s `:DU` Keepalive Heartbeat**, and 1-tap **Prep Field** (`GPS + Sync`) from the Solver HUD.
+  - **Kestrel & Bluetooth SIG Environmental Sensing (`0x181A`)**: decodes live temperature, humidity, station pressure, and wind speed using strictly open Bluetooth SIG ESS characteristics.
+  - **Onboard Phone Barometer**: optional `Sensor.TYPE_PRESSURE` toggle on the Weather tab for 100% offline station pressure.
 - **Field Themes, Text Scaling & Keep Screen Awake**
   - **Field Dark**, **Night Red** (OLED night-vision friendly), and **Daylight** themes, adjustable UI text scaling, and `FLAG_KEEP_SCREEN_ON` keep-awake toggle.
 
@@ -204,10 +206,11 @@ app/src/main/java/com/gunnies/ballistics/
 ```powershell
 .\gradlew.bat testDebugUnitTest
 ```
-Includes **41 unit tests** across:
+Includes **44 unit tests** across:
 - `BallisticEngineTest` (**19 tests**): G1/G7 table alignment, 3D inclined wind, 3-zone wind banding, stepped Multi-BC smooth blending, DSF interpolation & truing, Coriolis, aero jump, MV truing, MPBR, single-pass DOPE consistency, JSON backup codec, catalog counts.
 - `BallisticValidationTest` (**1 multi-fixture suite / 8 external benchmarks**): compares Gunnies against live-captured reference tables from Berger (Bryan Litz G1/G7) and ShootersCalculator across `.22 LR` subsonic, `.223 Rem`, `.308 Win`, `6.5 Creedmoor`, `.300 Win Mag`, and `1,200 yd` high-altitude `+15°` inclined fire. See **[VALIDATION.md](VALIDATION.md)** for full tables, tolerances, and deviation notes.
 - `CalibrationTest` (**5 tests**): Multi-point Levenberg-Marquardt MV+BC recovery (`6.5 CM` single-BC & multi-BC), single-point & Custom-Cd MV-only fallbacks, cold-bore/logbook atmospheric snapshot import, and Tall-Target MRAD/MOA SSF math & bounds.
 - `HitProbabilityTest` (**3 tests**): Exact Rayleigh CDF verification for isotropic circular Gaussian dispersion, monotonic plate-size & wind-uncertainty behavior, and subsonic `.22 LR` range-uncertainty dominance.
 - `CustomDragAndImportTest` (**6 tests**): Custom `Cd(Mach)` equivalence against G7 (`< 0.015 MOA` at 1,000 yd), JSON/CSV round-trip & validation errors, LBC1800 safe drag-model fallback, Strelok XML/key=value/CSV profile import, and attributed manufacturer catalog verification.
+- `HardwareIntegrationTest` (**3 tests**): Bluetooth SIG ESS (`0x181A`) temperature/humidity/pressure/wind decoding, malformed-payload rejection, Kestrel discovery, and phone barometer hPa→inHg conversion.
 - `Lbc1800ProtocolTest` (**7 tests**): XOR checksum verification, HDLC chunked deframing, `:BP` / `:AV` frame encoding, primary BC & range-weighted average wind serialization.

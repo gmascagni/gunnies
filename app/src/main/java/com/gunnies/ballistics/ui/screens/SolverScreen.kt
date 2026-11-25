@@ -213,7 +213,8 @@ fun SolverScreen(
                         WeatherQuickBar(
                             uiState = uiState,
                             onOpenWeatherTab = onOpenWeatherTab,
-                            onSyncGps = onRequestLocationWeather
+                            onSyncGps = onRequestLocationWeather,
+                            onReconnectLastBle = { viewModel.reconnectLastBleDevice(autoConnect = true) }
                         )
                     }
                 }
@@ -302,7 +303,8 @@ fun SolverScreen(
                     WeatherQuickBar(
                         uiState = uiState,
                         onOpenWeatherTab = onOpenWeatherTab,
-                        onSyncGps = onRequestLocationWeather
+                        onSyncGps = onRequestLocationWeather,
+                        onReconnectLastBle = { viewModel.reconnectLastBleDevice(autoConnect = true) }
                     )
                 }
                 item { Spacer(Modifier.height(12.dp)) }
@@ -1207,7 +1209,8 @@ private fun RangeTapeMagnifierDial(
 private fun WeatherQuickBar(
     uiState: AppUiState,
     onOpenWeatherTab: () -> Unit,
-    onSyncGps: () -> Unit
+    onSyncGps: () -> Unit,
+    onReconnectLastBle: () -> Unit
 ) {
     val prefs = uiState.preferences
     val atmo = uiState.solverInput.atmosphere
@@ -1251,19 +1254,35 @@ private fun WeatherQuickBar(
                 modifier = Modifier.weight(1f)
             )
             Spacer(Modifier.width(8.dp))
-            OutlinedButton(
-                onClick = onSyncGps,
-                enabled = !isFetching,
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                shape = MaterialTheme.shapes.small
-            ) {
-                if (isFetching) {
-                    CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(14.dp))
+            val isLbcConnected = uiState.bleState.connectionState == BleConnectionState.CONNECTED
+            val hasSavedBle = !prefs.lastConnectedBleAddress.isNullOrBlank()
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (!isLbcConnected && hasSavedBle) {
+                    OutlinedButton(
+                        onClick = onReconnectLastBle,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text("Re-link", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
-                Spacer(Modifier.width(4.dp))
-                Text("GPS", style = MaterialTheme.typography.labelMedium)
+                OutlinedButton(
+                    onClick = onSyncGps,
+                    enabled = !isFetching,
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    shape = MaterialTheme.shapes.small
+                ) {
+                    if (isFetching) {
+                        CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(14.dp))
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = if (isLbcConnected) "Prep Field" else "GPS",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
             }
         }
     }
