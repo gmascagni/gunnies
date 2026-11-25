@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -85,6 +84,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.bc1800.ballistics.R
 import com.bc1800.ballistics.ble.BleConnectionState
 import com.bc1800.ballistics.data.UnitFormatters
 import com.bc1800.ballistics.engine.BallisticEngine
@@ -95,7 +95,11 @@ import com.bc1800.ballistics.model.DistanceUnit
 import com.bc1800.ballistics.model.FirearmCategory
 import com.bc1800.ballistics.ui.AppUiState
 import com.bc1800.ballistics.ui.BallisticsViewModel
+import com.bc1800.ballistics.ui.components.GunneryHudPanel
+import com.bc1800.ballistics.ui.components.HardwareThumbBadge
 import com.bc1800.ballistics.ui.components.ReticleViewCard
+import com.bc1800.ballistics.ui.components.TurretDialGauge
+import com.bc1800.ballistics.ui.components.rememberChamferedHudShape
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.floor
@@ -327,27 +331,30 @@ private fun CompactRigStrip(
     val gun = uiState.activeFirearm
     val scope = uiState.activeScope
     val ammo = uiState.activeAmmo
+    val isNightRed = prefs.themeMode == AppThemeMode.NIGHT_RED
+    val gunThumb = if (gun.category == FirearmCategory.HANDGUN) R.drawable.img_cat_handgun else R.drawable.img_cat_rifle
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
         color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        shape = MaterialTheme.shapes.large
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = rememberChamferedHudShape(8.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Icon(
-                Icons.Default.Tune,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
+            HardwareThumbBadge(
+                drawableResId = gunThumb,
+                contentDescription = gun.name,
+                isNightRed = isNightRed,
+                size = 42.dp,
+                accentColor = MaterialTheme.colorScheme.primary
             )
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -393,18 +400,10 @@ private fun FiringSolutionPanel(
     val (elevNum, elevDir) = UnitFormatters.formatElevationHold(sol, prefs.angularUnit)
     val (windNum, windDir) = UnitFormatters.formatWindageHold(sol, prefs.angularUnit)
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.25.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)),
-        shape = MaterialTheme.shapes.large
+    GunneryHudPanel(
+        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f),
+        bracketColor = MaterialTheme.colorScheme.primary
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
             // Top bar: Solution @ Range + inline MOA|MRAD|IN toggle + True MV
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -462,19 +461,21 @@ private fun FiringSolutionPanel(
                 }
             }
 
-            // Hero Elevation + Windage Dual Tiles
+            // Hero Elevation + Windage Rotary Turret Drum Gauges
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                HoldMetricTile(
+                TurretDialGauge(
                     modifier = Modifier.weight(1f),
                     title = "ELEVATION",
                     direction = elevDir,
                     value = elevNum,
                     unitLabel = prefs.angularUnit.shortLabel,
+                    clicks = sol.elevationClicks,
                     subLabel = "${abs(sol.elevationClicks).roundToInt()} clicks (${active.clickUnit.label})",
-                    accentColor = MaterialTheme.colorScheme.primary
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    isElevation = true
                 )
                 val windSub = buildString {
                     append("${abs(sol.windageClicks).roundToInt()} clks")
@@ -489,14 +490,16 @@ private fun FiringSolutionPanel(
                         append(" • ${sol.windValuePercent}% val")
                     }
                 }
-                HoldMetricTile(
+                TurretDialGauge(
                     modifier = Modifier.weight(1f),
                     title = "WINDAGE",
                     direction = windDir,
                     value = windNum,
                     unitLabel = prefs.angularUnit.shortLabel,
+                    clicks = sol.windageClicks,
                     subLabel = windSub,
-                    accentColor = MaterialTheme.colorScheme.secondary
+                    accentColor = MaterialTheme.colorScheme.secondary,
+                    isElevation = false
                 )
             }
 
@@ -615,7 +618,6 @@ private fun FiringSolutionPanel(
                     )
                 }
             }
-        }
     }
 }
 
@@ -1019,69 +1021,6 @@ private fun WeatherQuickBar(
                 Spacer(Modifier.width(4.dp))
                 Text("GPS", style = MaterialTheme.typography.labelMedium)
             }
-        }
-    }
-}
-
-@Composable
-private fun HoldMetricTile(
-    modifier: Modifier = Modifier,
-    title: String,
-    direction: String,
-    value: String,
-    unitLabel: String,
-    subLabel: String,
-    accentColor: Color
-) {
-    Surface(
-        modifier = modifier,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f)),
-        shape = MaterialTheme.shapes.medium
-    ) {
-        Column(
-            modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = direction,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = accentColor,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.displayMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = unitLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = accentColor,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-            }
-            Text(
-                text = subLabel,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
         }
     }
 }

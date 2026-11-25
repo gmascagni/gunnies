@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.bc1800.ballistics.R
 import kotlin.math.hypot
 import kotlin.math.min
 
@@ -306,6 +307,7 @@ fun RangefinderHelpView(
                             isNightRed = isNightRed,
                             onSelectNumber = { selectedNumber = it }
                         )
+                        RangefinderHardwareCard(isNightRed = isNightRed)
                         RangefinderQuickControlsCard()
                         Spacer(Modifier.height(12.dp))
                     }
@@ -330,6 +332,9 @@ fun RangefinderHelpView(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    item(key = "hardware_unit") {
+                        RangefinderHardwareCard(isNightRed = isNightRed)
+                    }
                     item(key = "diagram") {
                         EyepieceDiagramCard(
                             selectedNumber = selectedNumber,
@@ -845,6 +850,43 @@ private fun IndicatorLegendCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RangefinderHardwareCard(isNightRed: Boolean) {
+    GunneryHudPanel(
+        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+        bracketColor = MaterialTheme.colorScheme.primary
+    ) {
+        Text(
+            text = "BONE COLLECTOR 1800 HARDWARE",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            HardwareThumbBadge(
+                drawableResId = R.drawable.img_rangefinder_bc1800,
+                contentDescription = "Bushnell Bone Collector 1800 Rangefinder",
+                isNightRed = isNightRed,
+                size = 112.dp,
+                accentColor = MaterialTheme.colorScheme.primary
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text("• Top FIRE: Power on, range, hold for SCAN", style = MaterialTheme.typography.bodySmall)
+                Text("• Side MODE: Cycle Bullseye / Brush / Setup", style = MaterialTheme.typography.bodySmall)
+                Text("• Rear Eyepiece: Twist diopter to focus reticle", style = MaterialTheme.typography.bodySmall)
+                Text("• Dual Lenses: Laser emitter & receiver optics", style = MaterialTheme.typography.bodySmall)
+                Text("• Bottom Cap: CR2 3V lithium battery compartment", style = MaterialTheme.typography.bodySmall)
             }
         }
     }

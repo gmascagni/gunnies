@@ -138,16 +138,10 @@ fun ReticleViewCard(
         (if (reticle.isMradBased) milDiam else moaDiam).toFloat()
     }
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        shape = MaterialTheme.shapes.large
+    GunneryHudPanel(
+        borderColor = MaterialTheme.colorScheme.outline,
+        bracketColor = MaterialTheme.colorScheme.primary
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
             // Header (tap left title area or chevron to expand/collapse)
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -386,7 +380,6 @@ fun ReticleViewCard(
                     }
                 }
             }
-        }
     }
 }
 
@@ -436,10 +429,35 @@ private fun ScopeOpticCanvas(
         val center = Offset(w / 2f, h / 2f)
         val innerRadius = radius * 0.91f
 
+        // CNC-knurled ocular housing bezel + multi-coated AR optical glass sheen
+        val bezelColor = if (isNightRed) Color(0xFF1A0404) else Color(0xFF141A16)
+        val serrationColor = if (isNightRed) Color(0xFF541414) else Color(0xFF2E3A32)
+        val arRimColor = if (isNightRed) Color(0xFFFF3838).copy(alpha = 0.42f) else Color(0xFF6EC484).copy(alpha = 0.40f)
+
+        drawCircle(color = bezelColor, radius = radius, center = center)
+        for (i in 0 until 60) {
+            val rad = Math.toRadians(i * 6.0)
+            val cosA = cos(rad).toFloat()
+            val sinA = sin(rad).toFloat()
+            val tickInner = if (i % 5 == 0) radius * 0.91f else radius * 0.935f
+            drawLine(
+                color = serrationColor,
+                start = Offset(center.x + tickInner * cosA, center.y + tickInner * sinA),
+                end = Offset(center.x + radius * 0.985f * cosA, center.y + radius * 0.985f * sinA),
+                strokeWidth = if (i % 5 == 0) 1.8.dp.toPx() else 1.0.dp.toPx()
+            )
+        }
+
         drawCircle(
             brush = Brush.radialGradient(colors = glassColors, center = center, radius = innerRadius),
             radius = innerRadius,
             center = center
+        )
+        drawCircle(
+            color = arRimColor,
+            radius = innerRadius,
+            center = center,
+            style = Stroke(width = 1.6.dp.toPx())
         )
 
         lensPath.rewind()

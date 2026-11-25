@@ -1,5 +1,6 @@
 package com.bc1800.ballistics.ui.screens
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -72,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.bc1800.ballistics.R
 import com.bc1800.ballistics.data.BallisticsCatalog
 import com.bc1800.ballistics.data.UnitFormatters
 import com.bc1800.ballistics.model.AmmoCategory
@@ -89,7 +91,10 @@ import com.bc1800.ballistics.model.SuppressorSetup
 import com.bc1800.ballistics.model.TwistDirection
 import com.bc1800.ballistics.ui.AppUiState
 import com.bc1800.ballistics.ui.BallisticsViewModel
+import com.bc1800.ballistics.ui.components.GunneryHudPanel
+import com.bc1800.ballistics.ui.components.HardwareThumbBadge
 import com.bc1800.ballistics.ui.components.RangefinderHelpView
+import com.bc1800.ballistics.ui.components.rememberChamferedHudShape
 import java.util.Locale
 import java.util.UUID
 
@@ -166,75 +171,93 @@ fun ProfilesScreen(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWide = maxWidth >= 600.dp
         val columns = if (isWide) 2 else 1
+        val isNightRed = uiState.preferences.themeMode == AppThemeMode.NIGHT_RED
 
         if (showRangefinderHelp) {
             RangefinderHelpView(
-                isNightRed = uiState.preferences.themeMode == AppThemeMode.NIGHT_RED,
+                isNightRed = isNightRed,
                 onBack = { showRangefinderHelp = false }
             )
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Active Rig Strip + LBC1800 Display Help Pill
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    shape = MaterialTheme.shapes.medium
+                // Active Rig Gunnery Strip + LBC1800 Display Help Pill
+                val gunThumb = if (uiState.activeFirearm.category == FirearmCategory.HANDGUN) {
+                    R.drawable.img_cat_handgun
+                } else {
+                    R.drawable.img_cat_rifle
+                }
+                GunneryHudPanel(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                    bracketColor = MaterialTheme.colorScheme.primary,
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f),
+                    cutSize = 8.dp
                 ) {
-                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "ACTIVE RIG",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Surface(
-                                onClick = { showRangefinderHelp = true },
-                                color = MaterialTheme.colorScheme.surface,
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                                shape = RoundedCornerShape(999.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        HardwareThumbBadge(
+                            drawableResId = gunThumb,
+                            contentDescription = uiState.activeFirearm.name,
+                            isNightRed = isNightRed,
+                            size = 44.dp,
+                            accentColor = MaterialTheme.colorScheme.primary
+                        )
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                Text(
+                                    text = "ACTIVE RIG",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Surface(
+                                    onClick = { showRangefinderHelp = true },
+                                    color = MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                    shape = RoundedCornerShape(999.dp)
                                 ) {
-                                    Icon(
-                                        Icons.AutoMirrored.Filled.HelpOutline,
-                                        contentDescription = "Rangefinder Help",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Text(
-                                        text = "Help",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.HelpOutline,
+                                            contentDescription = "Rangefinder Help",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "Help",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
+                            Text(
+                                text = "${uiState.activeFirearm.name}  •  ${uiState.activeScope.name}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val suppLabel = uiState.activeSuppressor?.name ?: "Unsuppressed"
+                            Text(
+                                text = "${uiState.activeAmmo.name}  •  Can: $suppLabel",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                        Text(
-                            text = "${uiState.activeFirearm.name}  •  ${uiState.activeScope.name}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        val suppLabel = uiState.activeSuppressor?.name ?: "Unsuppressed"
-                        Text(
-                            text = "${uiState.activeAmmo.name}  •  Can: $suppLabel",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.secondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
 
@@ -374,6 +397,8 @@ fun ProfilesScreen(
                                 isFavorite = gun.isFavorite,
                                 accentColor = MaterialTheme.colorScheme.primary,
                                 canDelete = uiState.firearms.size > 1,
+                                thumbResId = if (gun.category == FirearmCategory.HANDGUN) R.drawable.img_cat_handgun else R.drawable.img_cat_rifle,
+                                isNightRed = isNightRed,
                                 onSelect = { viewModel.selectActiveFirearm(gun.id) },
                                 onToggleFavorite = { viewModel.toggleFirearmFavorite(gun) },
                                 onEdit = {
@@ -425,6 +450,8 @@ fun ProfilesScreen(
                                 isFavorite = scope.isFavorite,
                                 accentColor = MaterialTheme.colorScheme.tertiary,
                                 canDelete = uiState.scopes.size > 1,
+                                thumbResId = R.drawable.img_cat_scope,
+                                isNightRed = isNightRed,
                                 onSelect = { viewModel.selectActiveScope(scope.id) },
                                 onToggleFavorite = { viewModel.toggleScopeFavorite(scope) },
                                 onEdit = {
@@ -476,6 +503,8 @@ fun ProfilesScreen(
                                 isFavorite = ammo.isFavorite,
                                 accentColor = MaterialTheme.colorScheme.secondary,
                                 canDelete = uiState.ammoLoads.size > 1,
+                                thumbResId = R.drawable.img_cat_ammo,
+                                isNightRed = isNightRed,
                                 onSelect = { viewModel.selectActiveAmmo(ammo.id) },
                                 onToggleFavorite = { viewModel.toggleAmmoFavorite(ammo) },
                                 onEdit = {
@@ -583,6 +612,8 @@ fun ProfilesScreen(
                                 isFavorite = supp.isFavorite,
                                 accentColor = MaterialTheme.colorScheme.tertiary,
                                 canDelete = true,
+                                thumbResId = R.drawable.img_cat_suppressor,
+                                isNightRed = isNightRed,
                                 onSelect = { viewModel.selectActiveSuppressor(supp.id) },
                                 onToggleFavorite = { viewModel.toggleSuppressorFavorite(supp) },
                                 onEdit = {
@@ -810,6 +841,8 @@ private fun ArsenalItemCard(
     isFavorite: Boolean,
     accentColor: Color,
     canDelete: Boolean,
+    @DrawableRes thumbResId: Int? = null,
+    isNightRed: Boolean = false,
     onSelect: () -> Unit,
     onToggleFavorite: () -> Unit,
     onEdit: () -> Unit,
@@ -830,10 +863,10 @@ private fun ArsenalItemCard(
         } else {
             BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         },
-        shape = MaterialTheme.shapes.large
+        shape = rememberChamferedHudShape(8.dp)
     ) {
         Column(
-            modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 12.dp),
+            modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 10.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Row(
@@ -845,6 +878,16 @@ private fun ArsenalItemCard(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    if (thumbResId != null) {
+                        HardwareThumbBadge(
+                            drawableResId = thumbResId,
+                            contentDescription = title,
+                            isNightRed = isNightRed,
+                            size = 44.dp,
+                            accentColor = if (isActive) accentColor else MaterialTheme.colorScheme.outlineVariant
+                        )
+                        Spacer(Modifier.width(10.dp))
+                    }
                     if (isActive) {
                         Icon(
                             Icons.Default.CheckCircle,

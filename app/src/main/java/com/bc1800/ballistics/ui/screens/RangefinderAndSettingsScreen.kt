@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.bc1800.ballistics.R
 import com.bc1800.ballistics.ble.BleConnectionState
 import com.bc1800.ballistics.ble.GattCharacteristicInfo
 import com.bc1800.ballistics.model.AngularUnit
@@ -73,6 +74,8 @@ import com.bc1800.ballistics.model.VelocityUnit
 import com.bc1800.ballistics.model.WindUnit
 import com.bc1800.ballistics.ui.AppUiState
 import com.bc1800.ballistics.ui.BallisticsViewModel
+import com.bc1800.ballistics.ui.components.GunneryHudPanel
+import com.bc1800.ballistics.ui.components.HardwareThumbBadge
 
 @Composable
 fun RangefinderScreen(
@@ -329,52 +332,68 @@ private fun BleConnectionCard(
 ) {
     val ble = uiState.bleState
     val prefs = uiState.preferences
+    val isNightRed = prefs.themeMode == AppThemeMode.NIGHT_RED
+    val accentBorder = if (ble.connectionState == BleConnectionState.CONNECTED) {
+        MaterialTheme.colorScheme.secondary
+    } else {
+        MaterialTheme.colorScheme.outline
+    }
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(
-            1.dp,
-            if (ble.connectionState == BleConnectionState.CONNECTED) {
-                MaterialTheme.colorScheme.secondary
-            } else {
-                MaterialTheme.colorScheme.outline
-            }
-        ),
-        shape = MaterialTheme.shapes.large
+    GunneryHudPanel(
+        borderColor = accentBorder,
+        bracketColor = if (ble.connectionState == BleConnectionState.CONNECTED) {
+            MaterialTheme.colorScheme.secondary
+        } else {
+            MaterialTheme.colorScheme.primary
+        }
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = when (ble.connectionState) {
-                        BleConnectionState.CONNECTED -> Icons.Default.BluetoothConnected
-                        BleConnectionState.SCANNING -> Icons.AutoMirrored.Filled.BluetoothSearching
-                        else -> Icons.Default.Bluetooth
-                    },
-                    contentDescription = null,
-                    tint = if (ble.connectionState == BleConnectionState.CONNECTED) {
-                        MaterialTheme.colorScheme.secondary
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    }
-                )
-                Spacer(Modifier.width(8.dp))
-                Column {
+            HardwareThumbBadge(
+                drawableResId = R.drawable.img_rangefinder_bc1800,
+                contentDescription = "Bushnell Bone Collector 1800",
+                isNightRed = isNightRed,
+                size = 64.dp,
+                accentColor = if (ble.connectionState == BleConnectionState.CONNECTED) {
+                    MaterialTheme.colorScheme.secondary
+                } else {
+                    MaterialTheme.colorScheme.primary
+                }
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = when (ble.connectionState) {
+                            BleConnectionState.CONNECTED -> Icons.Default.BluetoothConnected
+                            BleConnectionState.SCANNING -> Icons.AutoMirrored.Filled.BluetoothSearching
+                            else -> Icons.Default.Bluetooth
+                        },
+                        contentDescription = null,
+                        tint = if (ble.connectionState == BleConnectionState.CONNECTED) {
+                            MaterialTheme.colorScheme.secondary
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "BUSHNELL BONE COLLECTOR 1800",
+                        text = "BONE COLLECTOR 1800",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Text(
-                        text = ble.connectionState.label +
-                            (ble.connectedDeviceName?.let { " — $it" } ?: ""),
-                        style = MaterialTheme.typography.titleMedium
-                    )
                 }
+                Text(
+                    text = ble.connectionState.label +
+                        (ble.connectedDeviceName?.let { " — $it" } ?: ""),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
             }
+        }
 
             Text(
                 text = ble.statusMessage,
@@ -476,7 +495,6 @@ private fun BleConnectionCard(
                     }
                 }
             }
-        }
     }
 }
 
