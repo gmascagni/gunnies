@@ -50,7 +50,7 @@ class BallisticsRepository(private val context: Context) {
     }
 
     companion object {
-        private const val CURRENT_ARSENAL_VERSION = "v8_suppressors_db"
+        private const val CURRENT_ARSENAL_VERSION = "v9_eotech_512_g33"
     }
 
     private val safeData: Flow<Preferences> = context.ballisticsDataStore.data

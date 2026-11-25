@@ -99,7 +99,11 @@ fun ReticleViewCard(
     val reticle = scope.reticleType
     var expanded by remember(initiallyExpanded) { mutableStateOf(initiallyExpanded) }
     var illuminated by remember(reticle) {
-        mutableStateOf(reticle == ReticleType.RED_DOT_CIRCLE_65 || reticle == ReticleType.ARKEN_VPR_MIL)
+        mutableStateOf(
+            reticle == ReticleType.RED_DOT_CIRCLE_65 ||
+                reticle == ReticleType.EOTECH_HWS_68 ||
+                reticle == ReticleType.ARKEN_VPR_MIL
+        )
     }
     var dialElevationMode by remember { mutableStateOf(false) }
     var targetSize by remember { mutableStateOf(ReticleTargetSize.PLATE_10) }
@@ -111,6 +115,7 @@ fun ReticleViewCard(
                 ReticleType.ARKEN_VPR_MIL -> 10f
                 ReticleType.PA_ARC2_MOA, ReticleType.PA_ACSS_RGRID -> 10f
                 ReticleType.RED_DOT_CIRCLE_65 -> 1f
+                ReticleType.EOTECH_HWS_68 -> if (scope.name.contains("G33", ignoreCase = true) || scope.scopeModel.contains("G33", ignoreCase = true)) 3f else 1f
                 ReticleType.HANDGUN_THREE_DOT -> 1f
                 ReticleType.SIMPLE_DUPLEX -> 6f
             }
@@ -311,6 +316,7 @@ fun ReticleViewCard(
                             )
                         }
                         val zoomStops = when {
+                            reticle == ReticleType.EOTECH_HWS_68 -> listOf(1f, 3f)
                             reticle.maxZoom >= 16f -> listOf(4f, 8f, 12f, 16f)
                             reticle.maxZoom >= 14f -> listOf(4f, 8f, 10f, 14f)
                             else -> listOf(reticle.minZoom, (reticle.minZoom + reticle.maxZoom) / 2f, reticle.maxZoom)
@@ -456,6 +462,7 @@ private fun ScopeOpticCanvas(
             ReticleType.ARKEN_VPR_MIL, ReticleType.PA_ACSS_RGRID -> (innerRadius / 10.5f) * (zoom / 10f)
             ReticleType.PA_ARC2_MOA -> (innerRadius / 30f) * (zoom / 10f)
             ReticleType.RED_DOT_CIRCLE_65 -> (innerRadius * 0.46f / 32.5f) * zoom
+            ReticleType.EOTECH_HWS_68 -> (innerRadius * 0.46f / 34f) * (1f + (zoom - 1f) * 0.32f)
             ReticleType.HANDGUN_THREE_DOT -> (innerRadius / 24f) * zoom
             ReticleType.SIMPLE_DUPLEX -> (innerRadius / 20f) * (zoom / 6f)
         }
@@ -466,6 +473,7 @@ private fun ScopeOpticCanvas(
                 ReticleType.PA_ARC2_MOA -> drawPrimaryArmsArc2Moa(center, innerRadius, pxPerUnit, lineColor, softLineColor, numberPaint)
                 ReticleType.PA_ACSS_RGRID -> drawPrimaryArmsAcssRGrid(center, innerRadius, pxPerUnit, lineColor, softLineColor, scratchPath)
                 ReticleType.RED_DOT_CIRCLE_65 -> drawRedDotCircle65(center, innerRadius, pxPerUnit, illuminated, isNightRed)
+                ReticleType.EOTECH_HWS_68 -> drawEotechHws68(center, innerRadius, pxPerUnit, illuminated, isNightRed)
                 ReticleType.HANDGUN_THREE_DOT -> drawHandgunThreeDot(center, innerRadius, isNightRed, scratchPath)
                 ReticleType.SIMPLE_DUPLEX -> drawSimpleDuplex(center, innerRadius, lineColor)
             }
@@ -763,6 +771,43 @@ private fun DrawScope.drawRedDotCircle65(
 
     drawCircle(dotColor.copy(alpha = 0.30f), radius = 6.dp.toPx(), center = center)
     drawCircle(dotColor, radius = 2.6.dp.toPx(), center = center)
+}
+
+private fun DrawScope.drawEotechHws68(
+    center: Offset,
+    radius: Float,
+    pxPerMoa: Float,
+    illuminated: Boolean,
+    isNightRed: Boolean
+) {
+    val retColor = when {
+        isNightRed -> Color(0xFFFF3A3A)
+        illuminated -> Color(0xFFFF3030)
+        else -> Color(0xFF44FF66)
+    }
+    val ringR = (34f * pxPerMoa).coerceIn(radius * 0.24f, radius * 0.80f)
+    val tickLen = 9.dp.toPx()
+
+    // Signature EOTech 68 MOA dashed/segmented outer halo ring + 4 cardinal ticks + crisp 1 MOA dot
+    drawCircle(
+        color = retColor.copy(alpha = 0.22f),
+        radius = ringR,
+        center = center,
+        style = Stroke(width = 4.2.dp.toPx())
+    )
+    drawCircle(
+        color = retColor.copy(alpha = 0.92f),
+        radius = ringR,
+        center = center,
+        style = Stroke(width = 1.9.dp.toPx())
+    )
+    drawLine(retColor, Offset(center.x, center.y - ringR - tickLen * 0.45f), Offset(center.x, center.y - ringR + tickLen * 0.7f), 2.2.dp.toPx())
+    drawLine(retColor, Offset(center.x, center.y + ringR - tickLen * 0.7f), Offset(center.x, center.y + ringR + tickLen * 0.45f), 2.2.dp.toPx())
+    drawLine(retColor, Offset(center.x - ringR - tickLen * 0.45f, center.y), Offset(center.x - ringR + tickLen * 0.7f, center.y), 2.2.dp.toPx())
+    drawLine(retColor, Offset(center.x + ringR - tickLen * 0.7f, center.y), Offset(center.x + ringR + tickLen * 0.45f, center.y), 2.2.dp.toPx())
+
+    drawCircle(retColor.copy(alpha = 0.28f), radius = 4.8.dp.toPx(), center = center)
+    drawCircle(retColor, radius = 1.9.dp.toPx(), center = center)
 }
 
 private fun DrawScope.drawHandgunThreeDot(

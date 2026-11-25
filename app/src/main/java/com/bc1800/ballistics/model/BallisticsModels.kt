@@ -41,6 +41,7 @@ enum class ReticleType(
     PA_ARC2_MOA("Primary Arms ARC-2 MOA", false, 4f, 14f, true),
     PA_ACSS_RGRID("Primary Arms ACSS / R-Grid", true, 4f, 14f, true),
     RED_DOT_CIRCLE_65("Red Dot (2/65 MOA)", false, 1f, 4f, false),
+    EOTECH_HWS_68("EOTech 68 MOA / 1 MOA", false, 1f, 3f, false),
     HANDGUN_THREE_DOT("Handgun 3-Dot Irons", false, 1f, 2f, false),
     SIMPLE_DUPLEX("Classic Duplex", false, 3f, 9f, false)
 }
@@ -505,6 +506,19 @@ object DefaultProfiles {
             clickUnit = ClickUnit.HALF_MOA,
             isFavorite = true,
             notes = "Standard 2.60\" AR-15 bore-to-optic height • 2 MOA Dot / 65 MOA Ring"
+        ),
+        ScopeSetup(
+            id = "scope-eotech-512-g33",
+            name = "EOTech 512 + G33 3x Magnifier",
+            scopeModel = "HWS 512 (AA) + G33 3x STS Magnifier",
+            category = ScopeCategory.RED_DOT_IRON,
+            reticleType = ReticleType.EOTECH_HWS_68,
+            weaponMode = WeaponMode.RIFLE,
+            sightHeightInches = 2.60,
+            zeroRangeYards = 50.0,
+            clickUnit = ClickUnit.HALF_MOA,
+            isFavorite = true,
+            notes = "68 MOA ring + 1 MOA dot • 0.5 MOA clicks • Flip-to-side G33 3x • 50/200 yd zero"
         ),
         ScopeSetup(
             id = "scope-handgun-sights",
