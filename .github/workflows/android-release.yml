@@ -55,10 +55,15 @@ jobs:
           echo "name=${VERSION_NAME:-1.0.0}" >> "$GITHUB_OUTPUT"
           echo "code=${VERSION_CODE:-1}" >> "$GITHUB_OUTPUT"
 
-      - name: Run unit tests
+      - name: Run unit tests (including external validation harness)
         run: ./gradlew testDebugUnitTest
 
+      - name: Build debug APK on pull requests
+        if: github.event_name == 'pull_request'
+        run: ./gradlew assembleDebug
+
       - name: Check whether release signing secrets are configured
+        if: github.event_name != 'pull_request'
         id: signing
         shell: bash
         env:
@@ -113,7 +118,7 @@ jobs:
           echo "apk_name=${OUT_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Build debug APK (fallback when release signing secrets are not configured)
-        if: steps.signing.outputs.configured != 'true'
+        if: github.event_name != 'pull_request' && steps.signing.outputs.configured != 'true'
         id: build_debug
         shell: bash
         run: |
@@ -128,6 +133,7 @@ jobs:
           echo "apk_name=${OUT_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK build artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: gunnies-ballistics-apk

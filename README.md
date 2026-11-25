@@ -200,4 +200,7 @@ app/src/main/java/com/gunnies/ballistics/
 ```powershell
 .\gradlew.bat testDebugUnitTest
 ```
-Includes **26 unit tests** across `BallisticEngineTest` (**19 tests**: G1/G7 table alignment, 3D inclined wind, 3-zone wind banding, stepped Multi-BC smooth blending, DSF interpolation & truing, Coriolis, aero jump, MV truing, MPBR, single-pass DOPE consistency, JSON backup codec, catalog counts) and `Lbc1800ProtocolTest` (**7 tests**: XOR checksum verification, HDLC chunked deframing, `:BP` / `:AV` frame encoding, primary BC & range-weighted average wind serialization).
+Includes **27 unit tests** across:
+- `BallisticEngineTest` (**19 tests**): G1/G7 table alignment, 3D inclined wind, 3-zone wind banding, stepped Multi-BC smooth blending, DSF interpolation & truing, Coriolis, aero jump, MV truing, MPBR, single-pass DOPE consistency, JSON backup codec, catalog counts.
+- `BallisticValidationTest` (**1 multi-fixture suite / 8 external benchmarks**): compares Gunnies against live-captured reference tables from Berger (Bryan Litz G1/G7) and ShootersCalculator across `.22 LR` subsonic, `.223 Rem`, `.308 Win`, `6.5 Creedmoor`, `.300 Win Mag`, and `1,200 yd` high-altitude `+15°` inclined fire. See **[VALIDATION.md](VALIDATION.md)** for full tables, tolerances, and deviation notes.
+- `Lbc1800ProtocolTest` (**7 tests**): XOR checksum verification, HDLC chunked deframing, `:BP` / `:AV` frame encoding, primary BC & range-weighted average wind serialization.
