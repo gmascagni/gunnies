@@ -59,7 +59,7 @@ The simplest way to install Gunnies Ballistics on Android (**Android 8.0 / API 2
   - All core ballistic calculations, manual weather/wind entry, saved weather defaults, profiles, reticles, stage cards, DOPE tables, logbook, and JSON backups work **100% offline**.
 - **Hardware Integrations: Bushnell `LBC1800`, Kestrel / SIG ESS BLE & Phone Barometer** (`HardwareInterfaces.kt`, `RangefinderBleManager.kt`, `KestrelBleProtocol.kt`, `BarometerSensorService.kt`)
   - Refactored behind `RangefinderClient` so additional rangefinders and environmental sensors plug in cleanly (see [Hardware Protocol Reference](docs/hardware-protocols.md) for evaluated devices and proprietary-protocol boundaries).
-  - **Bushnell Bone Collector 1800 (`LBC1800`)**: wakes/unlocks (`:DU`), queries device info (`:DD`), pushes active rifle profile + atmosphere + mover (`:BP`) and 6-pair powder-temp velocity table (`:AV`), ingests live laser range & incline pings, supports **Auto-Reconnect on Wake**, optional **18s `:DU` Keepalive Heartbeat**, and 1-tap **Prep Field** (`GPS + Sync`) from the Solver HUD.
+  - **Bushnell Bone Collector 1800 (`LBC1800`)**: one-way **Phone → Rangefinder** BLE sync — wakes/unlocks (`:DU`), queries device info (`:DD`), pushes active rifle profile + atmosphere + mover (`:BP`) and 6-pair powder-temp velocity table (`:AV`), supports **Auto-Reconnect on Wake**, optional **18s `:DU` Keepalive Heartbeat**, and 1-tap **Prep Field** (`GPS + Sync`) from the Solver HUD. *(Confirmed on FW `v28.46`: the LBC1800 does not transmit laser range pings back to the phone over BLE.)*
   - **Kestrel & Bluetooth SIG Environmental Sensing (`0x181A`)**: decodes live temperature, humidity, station pressure, and wind speed using strictly open Bluetooth SIG ESS characteristics.
   - **Onboard Phone Barometer**: optional `Sensor.TYPE_PRESSURE` toggle on the Weather tab for 100% offline station pressure.
 - **Field Themes, Text Scaling & Keep Screen Awake**
@@ -69,7 +69,7 @@ The simplest way to install Gunnies Ballistics on Android (**Android 8.0 / API 2
 
 ## Reading the Viewfinder & Using the Rangefinder (`LBC1800`)
 
-Gunnies Ballistics and the optional **Bushnell Bone Collector 1800 (`LBC1800`)** work together as a two-way field system:
+Gunnies Ballistics and the optional **Bushnell Bone Collector 1800 (`LBC1800`)** work together via **one-way Phone → Rangefinder BLE sync**:
 
 <p align="center">
   <img src="docs/assets/lbc1800-viewfinder.jpg" alt="Bushnell Bone Collector 1800 viewfinder showing -14 degree angle, 50 Y line-of-sight distance, and 50 ARC horizontal distance" width="320" />
@@ -81,7 +81,7 @@ Gunnies Ballistics and the optional **Bushnell Bone Collector 1800 (`LBC1800`)**
    - **Left (`-14°`):** Your incline/declination angle relative to level ground.
    - **Center (`50 Y`):** Line-of-Sight (LOS) distance directly to the target.
    - **Bottom (`50`):** True horizontal ARC distance for shots inside 100 yards. For targets at **100–800 yards**, this readout switches automatically to your **onboard ballistic holdover** (`MOA` or `MRAD`) calculated from your synced profile.
-4. **Check the App HUD:** Whenever connected over BLE, each laser ping streams the range (`50 Y`) and angle (`-14°`) to **Gunnies Ballistics**, automatically updating your Solver HUD, DOPE table, and scope reticle aimpoint without touching your phone — including sub-100 yd rimfire holdovers and long-range solutions beyond the rangefinder's 800-yard onboard cap.
+4. **Use the Phone Solver for Sub-100 yd & 800+ yd Shots:** Because the Bone Collector 1800 firmware (`v28.46`) does not broadcast laser readings back over BLE, slide or tap the range on the **Solver** dial (or check the **DOPE** card) for sub-100 yd rimfire holds, full scope reticle visualization, and long-range solutions beyond the rangefinder's 800-yard onboard cap.
 
 ---
 

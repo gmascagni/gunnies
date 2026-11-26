@@ -8,7 +8,8 @@ This document records the protocol sources, implementation status, and licensing
 
 ### Bushnell Bone Collector 1800 (`LBC1800`)
 - **Transport:** Bluetooth Low Energy (BLE) ISSC/Microchip Transparent UART service (`49535343-fe7d-4ae5-8fa9-9fafd205e455`).
-- **Commands Implemented:** `:DU` (Device Unlock / Keepalive), `:DD` (Query Device Info), `:BP` (Ballistic Profile + Atmosphere + Mover), `:AV` (6-pair powder-temp velocity table), HDLC/ASCII telemetry RX.
+- **Commands Implemented:** `:DU` (Device Unlock / Keepalive), `:DD` (Query Device Info), `:BP` (Ballistic Profile + Atmosphere + Mover), `:AV` (6-pair powder-temp velocity table), `:AK` / `:VR` / `:A+` RX decoding.
+- **Direction (Verified on FW `v28.46`):** Strictly **one-way Phone → Rangefinder** profile & weather sync. The LBC1800 emits a 5-second `:A+` heartbeat while connected and does **not** broadcast laser range/angle pings back over BLE when Fire is pressed.
 - **Connection Reliability Features (Phase 5):**
   - **Remembered Device + Auto-Reconnect:** Stores the last paired `BC-xxxxxx` MAC address and leverages Android BLE `autoConnect = true` so pressing **Fire** on the rangefinder silently reconnects when it wakes from CR2 sleep.
   - **Optional Keepalive Heartbeat:** Sends a lightweight `:DU` heartbeat every 18 seconds while connected (configurable toggle in **Settings → Rangefinder**) to help keep the hardware radio awake longer.
